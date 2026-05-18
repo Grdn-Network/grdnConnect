@@ -97,8 +97,8 @@ public class GRDNConnectBehaviour : MonoBehaviour
 			foreach (Job item in currentJobsForApi)
 			{
 				string jobState = JobCompletionHelper.GetJobState(item);
-				string s = GetJobField(item, "startingStation", "startStation", "originStation") ?? "—";
-				string s2 = GetJobField(item, "finishStation", "destinationStation", "endStation") ?? "—";
+				string s = GetChainDataField(item, "chainOriginYardId") ?? "—";
+				string s2 = GetChainDataField(item, "chainDestinationYardId") ?? "—";
 				string[] obj = new string[11]
 				{
 					"{\"id\":\"",
@@ -180,6 +180,22 @@ public class GRDNConnectBehaviour : MonoBehaviour
 			}
 		}
 		return null;
+	}
+
+	private string GetChainDataField(Job job, string fieldName)
+	{
+		try
+		{
+			Type type = ((object)job).GetType();
+			PropertyInfo chainDataProp = type.GetProperty("chainData", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+			if (chainDataProp == null) return null;
+			object chainData = chainDataProp.GetValue(job);
+			if (chainData == null) return null;
+			PropertyInfo field = chainData.GetType().GetProperty(fieldName, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+			if (field == null) return null;
+			return field.GetValue(chainData)?.ToString();
+		}
+		catch { return null; }
 	}
 
 	private string ExtractJsonString(string json, string key)
