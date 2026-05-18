@@ -30,6 +30,63 @@ public class GRDNConnectBehaviour : MonoBehaviour
 		}
 	}
 
+	/// <summary>
+	/// Returns true if this game instance is the server host, or if DVMP is not loaded (singleplayer).
+	/// Uses reflection so GRDNConnect has zero compile-time dependency on dv-multiplayer.
+	/// </summary>
+	private bool IsHostOrSingleplayer()
+	{
+		try
+		{
+			foreach (Assembly asm in AppDomain.CurrentDomain.GetAssemblies())
+			{
+				// Only inspect assemblies that look like the multiplayer mod
+				string asmName = asm.GetName().Name;
+				if (!asmName.StartsWith("Multiplayer", StringComparison.OrdinalIgnoreCase))
+					continue;
+
+				// Search for the MultiplayerAPI type (namespace may vary across DVMP versions)
+				Type apiType = null;
+				foreach (Type t in asm.GetExportedTypes())
+				{
+					if (t.Name == "MultiplayerAPI")
+					{
+						apiType = t;
+						break;
+					}
+				}
+				if (apiType == null) continue;
+
+				// IsMultiplayerLoaded == false → singleplayer even with mod installed
+				PropertyInfo isLoadedProp = apiType.GetProperty("IsMultiplayerLoaded",
+					BindingFlags.Public | BindingFlags.Static);
+				if (isLoadedProp != null)
+				{
+					bool isLoaded = (bool)isLoadedProp.GetValue(null);
+					if (!isLoaded) return true; // singleplayer session
+				}
+
+				// Server != null → this instance is the host
+				PropertyInfo serverProp = apiType.GetProperty("Server",
+					BindingFlags.Public | BindingFlags.Static);
+				if (serverProp != null)
+				{
+					return serverProp.GetValue(null) != null;
+				}
+
+				// DVMP found but API shape unrecognised — refuse requests to be safe
+				return false;
+			}
+
+			// DVMP assembly not loaded at all — singleplayer
+			return true;
+		}
+		catch
+		{
+			return true; // fail open — reflection error means assume singleplayer
+		}
+	}
+
 	private void OnDestroy()
 	{
 		if (_listener != null && _listener.IsListening)
@@ -66,6 +123,14 @@ public class GRDNConnectBehaviour : MonoBehaviour
 		string text = ctx.Request.Url.AbsolutePath.ToLower();
 		try
 		{
+			// Reject requests if this player is not the host/singleplayer.
+			// Checked per-request so the state is current (not locked in at startup).
+			if (!IsHostOrSingleplayer())
+			{
+				SendJson(ctx.Response, 403, "{\"error\":\"Not the host\"}");
+				return;
+			}
+
 			if (ctx.Request.HttpMethod == "GET" && text == "/jobs")
 			{
 				HandleGetJobs(ctx.Response);
