@@ -25,7 +25,7 @@ public class Main
 
 	private static void OnGUI(UnityModManager.ModEntry modEntry)
 	{
-		Extensions.Draw<Settings>(Settings, modEntry);
+		UnityModManagerNet.Extensions.Draw<Settings>(Settings, modEntry);
 	}
 
 	private static void OnSaveGUI(UnityModManager.ModEntry modEntry)

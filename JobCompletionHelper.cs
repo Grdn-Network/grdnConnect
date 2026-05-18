@@ -18,7 +18,7 @@ public static class JobCompletionHelper
 		try
 		{
 			JobsManager instance = SingletonBehaviour<JobsManager>.Instance;
-			if ((Object)(object)instance == (Object)null)
+			if ((UnityEngine.Object)(object)instance == (UnityEngine.Object)null)
 			{
 				Debug.LogError((object)"[GRDNConnect] JobsManager.Instance is null.");
 				return false;
@@ -34,7 +34,7 @@ public static class JobCompletionHelper
 				if ((int)val == 2)
 				{
 					Inventory instance2 = SingletonBehaviour<Inventory>.Instance;
-					if ((Object)(object)instance2 != (Object)null)
+					if ((UnityEngine.Object)(object)instance2 != (UnityEngine.Object)null)
 					{
 						instance2.SetMoney(instance2.PlayerMoney + (double)wageForTheJob);
 						Debug.Log((object)$"[GRDNConnect] Job {jobId} completed. Paid ${wageForTheJob} to player.");
