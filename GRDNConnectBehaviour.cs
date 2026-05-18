@@ -66,7 +66,23 @@ public class GRDNConnectBehaviour : MonoBehaviour
 					if (!isLoaded) return true; // singleplayer session
 				}
 
-				// Server != null → this instance is the host
+				// Prefer Instance.IsHost / Instance.IsSinglePlayer (cleaner API)
+				PropertyInfo instanceProp = apiType.GetProperty("Instance",
+					BindingFlags.Public | BindingFlags.Static);
+				if (instanceProp != null)
+				{
+					object instance = instanceProp.GetValue(null);
+					if (instance != null)
+					{
+						Type instanceType = instance.GetType();
+						bool? isSingle = instanceType.GetProperty("IsSinglePlayer")?.GetValue(instance) as bool?;
+						if (isSingle == true) return true;
+						bool? isHost = instanceType.GetProperty("IsHost")?.GetValue(instance) as bool?;
+						if (isHost.HasValue) return isHost.Value;
+					}
+				}
+
+				// Fallback: Server != null → hosting
 				PropertyInfo serverProp = apiType.GetProperty("Server",
 					BindingFlags.Public | BindingFlags.Static);
 				if (serverProp != null)
@@ -135,6 +151,10 @@ public class GRDNConnectBehaviour : MonoBehaviour
 			{
 				HandleGetJobs(ctx.Response);
 			}
+			else if (ctx.Request.HttpMethod == "GET" && text == "/server-info")
+			{
+				HandleGetServerInfo(ctx.Response);
+			}
 			else if (ctx.Request.HttpMethod == "POST" && text == "/complete-job")
 			{
 				HandleCompleteJob(ctx.Request, ctx.Response);
@@ -149,6 +169,59 @@ public class GRDNConnectBehaviour : MonoBehaviour
 			Main.ModEntry.Logger.Error("[GRDNConnect] " + ex.Message);
 			SendJson(ctx.Response, 500, "{\"error\":\"Internal server error\"}");
 		}
+	}
+
+	private void HandleGetServerInfo(HttpListenerResponse res)
+	{
+		string serverName = null;
+		string password = null;
+
+		try
+		{
+			foreach (Assembly asm in AppDomain.CurrentDomain.GetAssemblies())
+			{
+				if (!asm.GetName().Name.StartsWith("Multiplayer", StringComparison.OrdinalIgnoreCase))
+					continue;
+
+				// DVMP stores settings in Multiplayer.Settings, accessed via a static field
+				// on the main mod class. Try common patterns.
+				Type settingsType = asm.GetType("Multiplayer.Settings");
+				if (settingsType == null) continue;
+
+				// Try Multiplayer.Multiplayer, Multiplayer.Mod, Multiplayer.Main
+				string[] holderNames = { "Multiplayer.Multiplayer", "Multiplayer.Mod", "Multiplayer.Main" };
+				foreach (string holderName in holderNames)
+				{
+					Type holderType = asm.GetType(holderName);
+					if (holderType == null) continue;
+
+					FieldInfo settingsField =
+						holderType.GetField("Settings", BindingFlags.Public | BindingFlags.Static) ??
+						holderType.GetField("settings", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+
+					if (settingsField == null) continue;
+
+					object settingsObj = settingsField.GetValue(null);
+					if (settingsObj == null) continue;
+
+					serverName = settingsType.GetProperty("ServerName",
+						BindingFlags.Public | BindingFlags.Instance)?.GetValue(settingsObj)?.ToString();
+					password = settingsType.GetProperty("Password",
+						BindingFlags.Public | BindingFlags.Instance)?.GetValue(settingsObj)?.ToString();
+					break;
+				}
+
+				if (serverName != null) break;
+			}
+		}
+		catch (Exception ex)
+		{
+			Main.ModEntry.Logger.Warning("[GRDNConnect] server-info reflection error: " + ex.Message);
+		}
+
+		string nameJson = serverName != null ? $"\"{Escape(serverName)}\"" : "null";
+		string passJson = password != null ? $"\"{Escape(password)}\"" : "null";
+		SendJson(res, 200, $"{{\"serverName\":{nameJson},\"password\":{passJson}}}");
 	}
 
 	private unsafe void HandleGetJobs(HttpListenerResponse res)
