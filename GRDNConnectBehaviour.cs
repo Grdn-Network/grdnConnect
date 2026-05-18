@@ -295,58 +295,11 @@ public class GRDNConnectBehaviour : MonoBehaviour
 				}
 				else
 				{
-							// Check these known types from the assembly (no GetTypes() scan)
-					string[] holderTypeNames = {
-						"Multiplayer.Multiplayer",
-						"Multiplayer.Components.Networking.NetworkLifecycle",
-						"Multiplayer.Networking.Managers.Server.NetworkServer",
-						"Multiplayer.Networking.Managers.Server.LobbyServerManager",
-						"Multiplayer.Networking.Managers.NetworkManager"
-					};
-					string[] memberNames = { "Settings", "settings", "_settings", "ModSettings", "modSettings" };
-
-					object settingsObj = null;
-					foreach (string holderName in holderTypeNames)
-					{
-						Type holderType = mpAsm.GetType(holderName);
-						if (holderType == null) continue;
-
-						// Check static fields
-						foreach (string mname in memberNames)
-						{
-							FieldInfo f = holderType.GetField(mname,
-								BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
-							if (f == null) continue;
-							try
-							{
-								object val = f.GetValue(null);
-								if (val == null || val.GetType() != settingsType) continue;
-								settingsObj = val;
-								Main.ModEntry.Logger.Log($"[GRDNConnect] Settings field found: {holderName}.{mname}");
-								break;
-							}
-							catch { }
-						}
-						if (settingsObj != null) break;
-
-						// Check static properties
-						foreach (string mname in memberNames)
-						{
-							PropertyInfo p = holderType.GetProperty(mname,
-								BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
-							if (p == null) continue;
-							try
-							{
-								object val = p.GetValue(null);
-								if (val == null || val.GetType() != settingsType) continue;
-								settingsObj = val;
-								Main.ModEntry.Logger.Log($"[GRDNConnect] Settings property found: {holderName}.{mname}");
-								break;
-							}
-							catch { }
-						}
-						if (settingsObj != null) break;
-					}
+								// Confirmed via /debug-multiplayer: Settings field on Multiplayer.Multiplayer
+					Type mainType = mpAsm.GetType("Multiplayer.Multiplayer");
+					FieldInfo settingsField = mainType?.GetField("Settings",
+						BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+					object settingsObj = settingsField?.GetValue(null);
 
 					if (settingsObj == null)
 					{
