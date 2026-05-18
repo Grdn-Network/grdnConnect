@@ -160,6 +160,10 @@ public class GRDNConnectBehaviour : MonoBehaviour
 			{
 				HandleDebugAssemblies(ctx.Response);
 			}
+			else if (ctx.Request.HttpMethod == "GET" && text == "/debug-multiplayer")
+			{
+				HandleDebugMultiplayer(ctx.Response);
+			}
 			else if (ctx.Request.HttpMethod == "POST" && text == "/complete-job")
 			{
 				HandleCompleteJob(ctx.Request, ctx.Response);
@@ -174,6 +178,55 @@ public class GRDNConnectBehaviour : MonoBehaviour
 			Main.ModEntry.Logger.Error("[GRDNConnect] " + ex.Message);
 			SendJson(ctx.Response, 500, "{\"error\":\"Internal server error\"}");
 		}
+	}
+
+	private void HandleDebugMultiplayer(HttpListenerResponse res)
+	{
+		var sb = new StringBuilder();
+		sb.Append("{");
+		try
+		{
+			Assembly mpAsm = null;
+			foreach (Assembly asm in AppDomain.CurrentDomain.GetAssemblies())
+				if (asm.GetName().Name.Equals("Multiplayer", StringComparison.OrdinalIgnoreCase))
+					{ mpAsm = asm; break; }
+
+			if (mpAsm == null) { sb.Append("\"error\":\"assembly not found\""); }
+			else
+			{
+				Type mainType = mpAsm.GetType("Multiplayer.Multiplayer");
+				if (mainType == null) { sb.Append("\"error\":\"Multiplayer.Multiplayer type not found\""); }
+				else
+				{
+					// Dump all static fields
+					sb.Append("\"fields\":[");
+					bool first = true;
+					foreach (FieldInfo f in mainType.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static))
+					{
+						if (!first) sb.Append(",");
+						first = false;
+						string valStr = "?";
+						try { object v = f.GetValue(null); valStr = v == null ? "null" : v.GetType().FullName; } catch { valStr = "error"; }
+						sb.Append($"{{\"name\":\"{Escape(f.Name)}\",\"type\":\"{Escape(f.FieldType.FullName)}\",\"value\":\"{Escape(valStr)}\"}}");
+					}
+					sb.Append("],");
+
+					// Dump all static properties
+					sb.Append("\"properties\":[");
+					first = true;
+					foreach (PropertyInfo p in mainType.GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static))
+					{
+						if (!first) sb.Append(",");
+						first = false;
+						sb.Append($"{{\"name\":\"{Escape(p.Name)}\",\"type\":\"{Escape(p.PropertyType.FullName)}\"}}");
+					}
+					sb.Append("]");
+				}
+			}
+		}
+		catch (Exception ex) { sb.Append($"\"error\":\"{Escape(ex.Message)}\""); }
+		sb.Append("}");
+		SendJson(res, 200, sb.ToString());
 	}
 
 	private void HandleDebugAssemblies(HttpListenerResponse res)
