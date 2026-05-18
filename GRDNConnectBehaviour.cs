@@ -155,6 +155,10 @@ public class GRDNConnectBehaviour : MonoBehaviour
 			{
 				HandleGetServerInfo(ctx.Response);
 			}
+			else if (ctx.Request.HttpMethod == "GET" && text == "/debug-assemblies")
+			{
+				HandleDebugAssemblies(ctx.Response);
+			}
 			else if (ctx.Request.HttpMethod == "POST" && text == "/complete-job")
 			{
 				HandleCompleteJob(ctx.Request, ctx.Response);
@@ -169,6 +173,41 @@ public class GRDNConnectBehaviour : MonoBehaviour
 			Main.ModEntry.Logger.Error("[GRDNConnect] " + ex.Message);
 			SendJson(ctx.Response, 500, "{\"error\":\"Internal server error\"}");
 		}
+	}
+
+	private void HandleDebugAssemblies(HttpListenerResponse res)
+	{
+		var sb = new StringBuilder();
+		sb.Append("[");
+		bool first = true;
+		foreach (Assembly asm in AppDomain.CurrentDomain.GetAssemblies())
+		{
+			if (!first) sb.Append(",");
+			first = false;
+			string asmName = asm.GetName().Name;
+			sb.Append($"{{\"assembly\":\"{Escape(asmName)}\"");
+
+			// For multiplayer assemblies, list all types
+			if (asmName.StartsWith("Multiplayer", StringComparison.OrdinalIgnoreCase))
+			{
+				sb.Append(",\"types\":[");
+				bool firstType = true;
+				try
+				{
+					foreach (Type t in asm.GetTypes())
+					{
+						if (!firstType) sb.Append(",");
+						firstType = false;
+						sb.Append($"\"{Escape(t.FullName)}\"");
+					}
+				}
+				catch { }
+				sb.Append("]");
+			}
+			sb.Append("}");
+		}
+		sb.Append("]");
+		SendJson(res, 200, sb.ToString());
 	}
 
 	private void HandleGetServerInfo(HttpListenerResponse res)
