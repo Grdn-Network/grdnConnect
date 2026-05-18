@@ -307,10 +307,11 @@ public class GRDNConnectBehaviour : MonoBehaviour
 					}
 					else
 					{
-						serverName = settingsType.GetProperty("ServerName",
-							BindingFlags.Public | BindingFlags.Instance)?.GetValue(settingsObj)?.ToString();
-						password = settingsType.GetProperty("Password",
-							BindingFlags.Public | BindingFlags.Instance)?.GetValue(settingsObj)?.ToString();
+						// UMM settings use public fields with [Draw], not properties
+						serverName = (settingsType.GetField("ServerName", BindingFlags.Public | BindingFlags.Instance)?.GetValue(settingsObj)
+							?? settingsType.GetProperty("ServerName", BindingFlags.Public | BindingFlags.Instance)?.GetValue(settingsObj))?.ToString();
+						password = (settingsType.GetField("Password", BindingFlags.Public | BindingFlags.Instance)?.GetValue(settingsObj)
+							?? settingsType.GetProperty("Password", BindingFlags.Public | BindingFlags.Instance)?.GetValue(settingsObj))?.ToString();
 						Main.ModEntry.Logger.Log($"[GRDNConnect] server-info: name='{serverName}' hasPassword={!string.IsNullOrEmpty(password)}");
 					}
 				}
