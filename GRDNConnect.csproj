@@ -14,6 +14,15 @@
     <AssemblySearchPaths>$(AssemblySearchPaths);$(MSBuildProjectDirectory)\lib</AssemblySearchPaths>
   </PropertyGroup>
 
+  <!-- Build-time only: Harmony is bundled inside UMM at runtime, but Roslyn needs
+       it to resolve UMM's public API (ModEntry.HarmonyInstance uses HarmonyLib types) -->
+  <ItemGroup>
+    <PackageReference Include="Lib.Harmony" Version="2.3.*">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>compile</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+
   <ItemGroup>
     <Reference Include="Assembly-CSharp">
       <HintPath>lib\Assembly-CSharp.dll</HintPath>
