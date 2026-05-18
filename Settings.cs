@@ -1,13 +1,13 @@
 using UnityModManagerNet;
 
-public class Settings : ModSettings, IDrawable
+public class Settings : UnityModManager.ModSettings, IDrawable
 {
 	[Draw("Network Port (1024-65535)")]
 	public int Port = 7230;
 
-	public override void Save(ModEntry modEntry)
+	public override void Save(UnityModManager.ModEntry modEntry)
 	{
-		ModSettings.Save<Settings>(this, modEntry);
+		UnityModManager.ModSettings.Save<Settings>(this, modEntry);
 	}
 
 	public void OnChange()
