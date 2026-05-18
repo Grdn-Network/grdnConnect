@@ -183,35 +183,33 @@ public class GRDNConnectBehaviour : MonoBehaviour
 				if (!asm.GetName().Name.StartsWith("Multiplayer", StringComparison.OrdinalIgnoreCase))
 					continue;
 
-				// DVMP stores settings in Multiplayer.Settings, accessed via a static field
-				// on the main mod class. Try common patterns.
 				Type settingsType = asm.GetType("Multiplayer.Settings");
 				if (settingsType == null) continue;
 
-				// Try Multiplayer.Multiplayer, Multiplayer.Mod, Multiplayer.Main
-				string[] holderNames = { "Multiplayer.Multiplayer", "Multiplayer.Mod", "Multiplayer.Main" };
-				foreach (string holderName in holderNames)
+				// Scan every type in the assembly for a static field of type Multiplayer.Settings
+				// This avoids hardcoding the holder class name.
+				object settingsObj = null;
+				foreach (Type t in asm.GetTypes())
 				{
-					Type holderType = asm.GetType(holderName);
-					if (holderType == null) continue;
-
-					FieldInfo settingsField =
-						holderType.GetField("Settings", BindingFlags.Public | BindingFlags.Static) ??
-						holderType.GetField("settings", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
-
-					if (settingsField == null) continue;
-
-					object settingsObj = settingsField.GetValue(null);
-					if (settingsObj == null) continue;
-
-					serverName = settingsType.GetProperty("ServerName",
-						BindingFlags.Public | BindingFlags.Instance)?.GetValue(settingsObj)?.ToString();
-					password = settingsType.GetProperty("Password",
-						BindingFlags.Public | BindingFlags.Instance)?.GetValue(settingsObj)?.ToString();
-					break;
+					foreach (FieldInfo f in t.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static))
+					{
+						if (f.FieldType != settingsType) continue;
+						object val = f.GetValue(null);
+						if (val == null) continue;
+						settingsObj = val;
+						Main.ModEntry.Logger.Log($"[GRDNConnect] Found Settings on {t.FullName}.{f.Name}");
+						break;
+					}
+					if (settingsObj != null) break;
 				}
 
-				if (serverName != null) break;
+				if (settingsObj == null) continue;
+
+				serverName = settingsType.GetProperty("ServerName",
+					BindingFlags.Public | BindingFlags.Instance)?.GetValue(settingsObj)?.ToString();
+				password = settingsType.GetProperty("Password",
+					BindingFlags.Public | BindingFlags.Instance)?.GetValue(settingsObj)?.ToString();
+				break;
 			}
 		}
 		catch (Exception ex)
