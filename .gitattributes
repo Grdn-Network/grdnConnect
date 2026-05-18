@@ -1,0 +1,4 @@
+# Treat all DLLs as binary — never apply line-ending conversion
+*.dll binary
+*.exe binary
+*.pdb binary

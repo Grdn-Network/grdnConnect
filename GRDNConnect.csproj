@@ -10,6 +10,8 @@
     <Optimize>True</Optimize>
     <OutputPath>bin\Release</OutputPath>
     <UseWindowsForms>true</UseWindowsForms>
+    <!-- Tell MSBuild to search lib\ for all references -->
+    <AssemblySearchPaths>$(AssemblySearchPaths);$(MSBuildProjectDirectory)\lib</AssemblySearchPaths>
   </PropertyGroup>
 
   <ItemGroup>
