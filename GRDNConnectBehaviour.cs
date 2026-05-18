@@ -217,47 +217,99 @@ public class GRDNConnectBehaviour : MonoBehaviour
 
 		try
 		{
+			// Target the Multiplayer assembly directly — we know it exists from debug
+			Assembly mpAsm = null;
 			foreach (Assembly asm in AppDomain.CurrentDomain.GetAssemblies())
 			{
-				if (!asm.GetName().Name.StartsWith("Multiplayer", StringComparison.OrdinalIgnoreCase))
-					continue;
-
-				Type settingsType = asm.GetType("Multiplayer.Settings");
-				if (settingsType == null) continue;
-
-				// Scan every type in the assembly for a static field of type Multiplayer.Settings
-				// This avoids hardcoding the holder class name.
-				object settingsObj = null;
-				foreach (Type t in asm.GetTypes())
+				if (asm.GetName().Name.Equals("Multiplayer", StringComparison.OrdinalIgnoreCase))
 				{
-					foreach (FieldInfo f in t.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static))
-					{
-						if (f.FieldType != settingsType) continue;
-						object val = f.GetValue(null);
-						if (val == null) continue;
-						settingsObj = val;
-						Main.ModEntry.Logger.Log($"[GRDNConnect] Found Settings on {t.FullName}.{f.Name}");
-						break;
-					}
-					if (settingsObj != null) break;
+					mpAsm = asm;
+					break;
 				}
+			}
 
-				if (settingsObj == null) continue;
+			if (mpAsm == null)
+			{
+				Main.ModEntry.Logger.Warning("[GRDNConnect] Multiplayer assembly not found");
+			}
+			else
+			{
+				Type settingsType = mpAsm.GetType("Multiplayer.Settings");
+				if (settingsType == null)
+				{
+					Main.ModEntry.Logger.Warning("[GRDNConnect] Multiplayer.Settings type not found");
+				}
+				else
+				{
+					object settingsObj = null;
 
-				serverName = settingsType.GetProperty("ServerName",
-					BindingFlags.Public | BindingFlags.Instance)?.GetValue(settingsObj)?.ToString();
-				password = settingsType.GetProperty("Password",
-					BindingFlags.Public | BindingFlags.Instance)?.GetValue(settingsObj)?.ToString();
-				break;
+					// Direct approach: Multiplayer.Multiplayer is the known main class
+					Type mainType = mpAsm.GetType("Multiplayer.Multiplayer");
+					if (mainType != null)
+					{
+						foreach (string fname in new[] { "Settings", "settings", "_settings" })
+						{
+							FieldInfo f = mainType.GetField(fname,
+								BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+							if (f == null) continue;
+							object val = f.GetValue(null);
+							if (val == null) continue;
+							settingsObj = val;
+							Main.ModEntry.Logger.Log($"[GRDNConnect] Settings found on Multiplayer.Multiplayer.{fname}");
+							break;
+						}
+					}
+
+					// Fallback: scan all types — handle ReflectionTypeLoadException
+					if (settingsObj == null)
+					{
+						Type[] types;
+						try { types = mpAsm.GetTypes(); }
+						catch (ReflectionTypeLoadException ex) { types = ex.Types; }
+
+						foreach (Type t in types)
+						{
+							if (t == null) continue;
+							try
+							{
+								foreach (FieldInfo f in t.GetFields(
+									BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static))
+								{
+									if (f.FieldType != settingsType) continue;
+									object val = f.GetValue(null);
+									if (val == null) continue;
+									settingsObj = val;
+									Main.ModEntry.Logger.Log($"[GRDNConnect] Settings found via scan on {t.FullName}.{f.Name}");
+									break;
+								}
+							}
+							catch { }
+							if (settingsObj != null) break;
+						}
+					}
+
+					if (settingsObj == null)
+					{
+						Main.ModEntry.Logger.Warning("[GRDNConnect] Could not locate Settings instance in Multiplayer assembly");
+					}
+					else
+					{
+						serverName = settingsType.GetProperty("ServerName",
+							BindingFlags.Public | BindingFlags.Instance)?.GetValue(settingsObj)?.ToString();
+						password = settingsType.GetProperty("Password",
+							BindingFlags.Public | BindingFlags.Instance)?.GetValue(settingsObj)?.ToString();
+						Main.ModEntry.Logger.Log($"[GRDNConnect] server-info: name='{serverName}' hasPassword={password != null}");
+					}
+				}
 			}
 		}
 		catch (Exception ex)
 		{
-			Main.ModEntry.Logger.Warning("[GRDNConnect] server-info reflection error: " + ex.Message);
+			Main.ModEntry.Logger.Warning("[GRDNConnect] server-info error: " + ex.Message);
 		}
 
-		string nameJson = serverName != null ? $"\"{Escape(serverName)}\"" : "null";
-		string passJson = password != null ? $"\"{Escape(password)}\"" : "null";
+		string nameJson = !string.IsNullOrEmpty(serverName) ? $"\"{Escape(serverName)}\"" : "null";
+		string passJson = !string.IsNullOrEmpty(password)   ? $"\"{Escape(password)}\"" : "null";
 		SendJson(res, 200, $"{{\"serverName\":{nameJson},\"password\":{passJson}}}");
 	}
 
