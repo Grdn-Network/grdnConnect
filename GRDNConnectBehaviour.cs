@@ -130,7 +130,8 @@ public class GRDNConnectBehaviour : MonoBehaviour
 			{
 				break;
 			}
-			HandleRequest(ctx);
+			try { HandleRequest(ctx); }
+			catch (Exception ex) { Main.ModEntry.Logger.Error("[GRDNConnect] Unhandled: " + ex.Message); }
 		}
 	}
 
@@ -241,9 +242,8 @@ public class GRDNConnectBehaviour : MonoBehaviour
 				}
 				else
 				{
+						// Direct access — Multiplayer.Multiplayer is confirmed to exist
 					object settingsObj = null;
-
-					// Direct approach: Multiplayer.Multiplayer is the known main class
 					Type mainType = mpAsm.GetType("Multiplayer.Multiplayer");
 					if (mainType != null)
 					{
@@ -260,37 +260,9 @@ public class GRDNConnectBehaviour : MonoBehaviour
 						}
 					}
 
-					// Fallback: scan all types — handle ReflectionTypeLoadException
 					if (settingsObj == null)
 					{
-						Type[] types;
-						try { types = mpAsm.GetTypes(); }
-						catch (ReflectionTypeLoadException ex) { types = ex.Types; }
-
-						foreach (Type t in types)
-						{
-							if (t == null) continue;
-							try
-							{
-								foreach (FieldInfo f in t.GetFields(
-									BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static))
-								{
-									if (f.FieldType != settingsType) continue;
-									object val = f.GetValue(null);
-									if (val == null) continue;
-									settingsObj = val;
-									Main.ModEntry.Logger.Log($"[GRDNConnect] Settings found via scan on {t.FullName}.{f.Name}");
-									break;
-								}
-							}
-							catch { }
-							if (settingsObj != null) break;
-						}
-					}
-
-					if (settingsObj == null)
-					{
-						Main.ModEntry.Logger.Warning("[GRDNConnect] Could not locate Settings instance in Multiplayer assembly");
+						Main.ModEntry.Logger.Warning("[GRDNConnect] Could not locate Settings instance — field not found or null");
 					}
 					else
 					{
@@ -298,7 +270,7 @@ public class GRDNConnectBehaviour : MonoBehaviour
 							BindingFlags.Public | BindingFlags.Instance)?.GetValue(settingsObj)?.ToString();
 						password = settingsType.GetProperty("Password",
 							BindingFlags.Public | BindingFlags.Instance)?.GetValue(settingsObj)?.ToString();
-						Main.ModEntry.Logger.Log($"[GRDNConnect] server-info: name='{serverName}' hasPassword={password != null}");
+						Main.ModEntry.Logger.Log($"[GRDNConnect] server-info: name='{serverName}' hasPassword={!string.IsNullOrEmpty(password)}");
 					}
 				}
 			}
