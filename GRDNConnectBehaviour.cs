@@ -295,27 +295,62 @@ public class GRDNConnectBehaviour : MonoBehaviour
 				}
 				else
 				{
-						// Direct access — Multiplayer.Multiplayer is confirmed to exist
+							// Check these known types from the assembly (no GetTypes() scan)
+					string[] holderTypeNames = {
+						"Multiplayer.Multiplayer",
+						"Multiplayer.Components.Networking.NetworkLifecycle",
+						"Multiplayer.Networking.Managers.Server.NetworkServer",
+						"Multiplayer.Networking.Managers.Server.LobbyServerManager",
+						"Multiplayer.Networking.Managers.NetworkManager"
+					};
+					string[] memberNames = { "Settings", "settings", "_settings", "ModSettings", "modSettings" };
+
 					object settingsObj = null;
-					Type mainType = mpAsm.GetType("Multiplayer.Multiplayer");
-					if (mainType != null)
+					foreach (string holderName in holderTypeNames)
 					{
-						foreach (string fname in new[] { "Settings", "settings", "_settings" })
+						Type holderType = mpAsm.GetType(holderName);
+						if (holderType == null) continue;
+
+						// Check static fields
+						foreach (string mname in memberNames)
 						{
-							FieldInfo f = mainType.GetField(fname,
+							FieldInfo f = holderType.GetField(mname,
 								BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
 							if (f == null) continue;
-							object val = f.GetValue(null);
-							if (val == null) continue;
-							settingsObj = val;
-							Main.ModEntry.Logger.Log($"[GRDNConnect] Settings found on Multiplayer.Multiplayer.{fname}");
-							break;
+							try
+							{
+								object val = f.GetValue(null);
+								if (val == null || val.GetType() != settingsType) continue;
+								settingsObj = val;
+								Main.ModEntry.Logger.Log($"[GRDNConnect] Settings field found: {holderName}.{mname}");
+								break;
+							}
+							catch { }
 						}
+						if (settingsObj != null) break;
+
+						// Check static properties
+						foreach (string mname in memberNames)
+						{
+							PropertyInfo p = holderType.GetProperty(mname,
+								BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+							if (p == null) continue;
+							try
+							{
+								object val = p.GetValue(null);
+								if (val == null || val.GetType() != settingsType) continue;
+								settingsObj = val;
+								Main.ModEntry.Logger.Log($"[GRDNConnect] Settings property found: {holderName}.{mname}");
+								break;
+							}
+							catch { }
+						}
+						if (settingsObj != null) break;
 					}
 
 					if (settingsObj == null)
 					{
-						Main.ModEntry.Logger.Warning("[GRDNConnect] Could not locate Settings instance — field not found or null");
+						Main.ModEntry.Logger.Warning("[GRDNConnect] Settings not found on any known type — check UMM log");
 					}
 					else
 					{
