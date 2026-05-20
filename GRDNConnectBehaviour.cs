@@ -164,6 +164,10 @@ public class GRDNConnectBehaviour : MonoBehaviour
 			{
 				HandleDebugMultiplayer(ctx.Response);
 			}
+			else if (ctx.Request.HttpMethod == "GET" && text == "/locos")
+			{
+				HandleGetLocos(ctx.Response);
+			}
 			else if (ctx.Request.HttpMethod == "POST" && text == "/complete-job")
 			{
 				HandleCompleteJob(ctx.Request, ctx.Response);
@@ -467,5 +471,151 @@ public class GRDNConnectBehaviour : MonoBehaviour
 	private string Escape(string s)
 	{
 		return s?.Replace("\\", "\\\\").Replace("\"", "\\\"") ?? "";
+	}
+
+	// -------------------------------------------------------------------------
+	// GET /locos
+	// Returns every locomotive in the world with the jobs currently on its
+	// trainset, matched by car GUID through the active job task trees.
+	// Shape: [{ locoId, locoType, jobs: [{ jobId, type, departure, destination }] }]
+	// -------------------------------------------------------------------------
+
+	private void HandleGetLocos(HttpListenerResponse res)
+	{
+		var sb = new StringBuilder();
+		sb.Append("[");
+		bool firstLoco = true;
+
+		try
+		{
+			// Build carGuid → jobs lookup from every currently active job
+			var carGuidToJobs = new Dictionary<string, List<Job>>();
+			var activeJobs = JobCompletionHelper.GetCurrentJobsForApi();
+			if (activeJobs != null)
+			{
+				foreach (var job in activeJobs)
+				{
+					foreach (var guid in GetCarGuidsFromJob(job))
+					{
+						if (!carGuidToJobs.TryGetValue(guid, out var list))
+							carGuidToJobs[guid] = list = new List<Job>();
+						if (!list.Contains(job))
+							list.Add(job);
+					}
+				}
+			}
+
+			// Inspect every TrainCar in the scene; only process locos
+			TrainCar[] allCars = Object.FindObjectsOfType<TrainCar>();
+			foreach (var loco in allCars)
+			{
+				if (!loco.IsLoco) continue;
+
+				// Walk all cars coupled to this loco and collect unique jobs
+				var seenJobIds = new HashSet<string>();
+				var locoJobs   = new List<Job>();
+				if (loco.trainset != null)
+				{
+					foreach (var coupled in loco.trainset.cars)
+					{
+						if (coupled?.logicCar == null) continue;
+						string cGuid = coupled.logicCar.carGuid;
+						if (!string.IsNullOrEmpty(cGuid) && carGuidToJobs.TryGetValue(cGuid, out var js))
+							foreach (var j in js)
+								if (seenJobIds.Add(j.ID)) locoJobs.Add(j);
+					}
+				}
+
+				if (!firstLoco) sb.Append(",");
+				firstLoco = false;
+
+				string locoId   = Escape(loco.ID ?? loco.carGuid ?? "unknown");
+				string locoType = Escape(((object)loco.carType).ToString());
+
+				sb.Append($"{{\"locoId\":\"{locoId}\",\"locoType\":\"{locoType}\",\"jobs\":[");
+				bool firstJob = true;
+				foreach (var job in locoJobs)
+				{
+					if (!firstJob) sb.Append(",");
+					firstJob = false;
+					string dep = Escape(GetChainDataField(job, "chainOriginYardId")      ?? "—");
+					string des = Escape(GetChainDataField(job, "chainDestinationYardId") ?? "—");
+					string jt  = Escape(((object)job.jobType).ToString());
+					sb.Append($"{{\"jobId\":\"{Escape(job.ID)}\",\"type\":\"{jt}\",\"departure\":\"{dep}\",\"destination\":\"{des}\"}}");
+				}
+				sb.Append("]}");
+			}
+		}
+		catch (Exception ex)
+		{
+			Main.ModEntry.Logger.Error("[GRDNConnect] /locos error: " + ex.Message);
+		}
+
+		sb.Append("]");
+		SendJson(res, 200, sb.ToString());
+	}
+
+	/// <summary>
+	/// Walks a Job's task tree via reflection and returns all logicCar carGuids
+	/// referenced by any task. Works across DV versions without a compile-time
+	/// dependency on specific Task subclasses.
+	/// </summary>
+	private IEnumerable<string> GetCarGuidsFromJob(Job job)
+	{
+		var guids = new List<string>();
+		try
+		{
+			var method = job.GetType().GetMethod("GetTaskList",
+				BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+			if (method?.Invoke(job, null) is IEnumerable tasks)
+				foreach (var task in tasks)
+					ExtractCarGuids(task, guids);
+		}
+		catch { }
+		return guids;
+	}
+
+	// Property/field names used across DV versions for the car list on a task
+	private static readonly string[] _carListMembers =
+		{ "carsToTransport", "cars", "requiredCars", "carsToLoad", "carsToUnload", "carsToShunt" };
+
+	/// <summary>
+	/// Recursively extracts carGuid strings from a task object (and any sub-tasks)
+	/// by inspecting known property/field names via reflection.
+	/// </summary>
+	private void ExtractCarGuids(object task, List<string> guids)
+	{
+		if (task == null) return;
+		try
+		{
+			Type t = task.GetType();
+			const BindingFlags bf = BindingFlags.Public | BindingFlags.NonPublic
+			                      | BindingFlags.Instance | BindingFlags.FlattenHierarchy;
+
+			foreach (var name in _carListMembers)
+			{
+				object val = t.GetProperty(name, bf)?.GetValue(task)
+				          ?? t.GetField(name, bf)?.GetValue(task);
+
+				if (val is not IEnumerable cars) continue;
+
+				foreach (var car in cars)
+				{
+					if (car == null) continue;
+					var ct   = car.GetType();
+					string g = ct.GetProperty("carGuid", bf)?.GetValue(car)?.ToString()
+					        ?? ct.GetField("carGuid",    bf)?.GetValue(car)?.ToString();
+					if (!string.IsNullOrEmpty(g)) guids.Add(g);
+				}
+			}
+
+			// Recurse into nested task lists (e.g. parallel/sequential composites)
+			var sub = t.GetMethod("GetTaskList",
+				BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+			if (sub?.Invoke(task, null) is IEnumerable subTasks)
+				foreach (var subTask in subTasks)
+					ExtractCarGuids(subTask, guids);
+		}
+		catch { }
 	}
 }
