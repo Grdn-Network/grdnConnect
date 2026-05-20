@@ -32,7 +32,8 @@ jobs:
       - name: Package
         run: |
           New-Item -ItemType Directory -Path "release\GRDNConnect" -Force | Out-Null
-          Copy-Item "bin\Release\GRDNConnect.dll" "release\GRDNConnect\"
+          $dll = Get-ChildItem -Path "bin\Release" -Filter "GRDNConnect.dll" -Recurse | Select-Object -First 1
+          Copy-Item $dll.FullName "release\GRDNConnect\"
           Copy-Item "Info.json" "release\GRDNConnect\"
           Compress-Archive -Path "release\GRDNConnect" -DestinationPath "GRDNConnect-${{ github.ref_name }}.zip"
 
