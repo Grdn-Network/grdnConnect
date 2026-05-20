@@ -669,13 +669,11 @@ public class GRDNConnectBehaviour : MonoBehaviour
 		return guids;
 	}
 
-	// Property/field names used across DV versions for the car list on a task
-	private static readonly string[] _carListMembers =
-		{ "carsToTransport", "cars", "requiredCars", "carsToLoad", "carsToUnload", "carsToShunt" };
-
 	/// <summary>
-	/// Recursively extracts carGuid strings from a task object (and any sub-tasks)
-	/// by inspecting known property/field names via reflection.
+	/// Recursively extracts carGuid strings from a task object (and any sub-tasks).
+	/// Scans every field and property on the task — no hardcoded field names needed.
+	/// For each enumerable member, tries to read carGuid directly (Car/logic layer)
+	/// or via logicCar.carGuid (TrainCar/physical layer).
 	/// </summary>
 	private void ExtractCarGuids(object task, List<string> guids)
 	{
@@ -686,27 +684,38 @@ public class GRDNConnectBehaviour : MonoBehaviour
 			const BindingFlags bf = BindingFlags.Public | BindingFlags.NonPublic
 			                      | BindingFlags.Instance | BindingFlags.FlattenHierarchy;
 
-			foreach (var name in _carListMembers)
+			// Scan every field and property — no guessing on names
+			var members = t.GetFields(bf).Cast<MemberInfo>()
+			               .Concat(t.GetProperties(bf).Cast<MemberInfo>());
+
+			foreach (var member in members)
 			{
-				object val = t.GetProperty(name, bf)?.GetValue(task)
-				          ?? t.GetField(name, bf)?.GetValue(task);
-
-				if (val is not IEnumerable cars) continue;
-
-				foreach (var car in cars)
+				object val;
+				try
 				{
-					if (car == null) continue;
-					var ct = car.GetType();
+					val = member is FieldInfo fi
+					    ? fi.GetValue(task)
+					    : ((PropertyInfo)member).GetValue(task);
+				}
+				catch { continue; }
 
-					// Try direct carGuid (Car / logic layer)
-					string g = ct.GetProperty("carGuid", bf)?.GetValue(car)?.ToString()
-					        ?? ct.GetField("carGuid",    bf)?.GetValue(car)?.ToString();
+				if (val == null || val is string) continue;
+				if (!(val is IEnumerable items)) continue;
 
-					// Fallback: object may be a TrainCar (physical layer) — check logicCar.carGuid
+				foreach (var item in items)
+				{
+					if (item == null) continue;
+					var ct = item.GetType();
+
+					// Direct carGuid (Car / logic layer)
+					string g = ct.GetProperty("carGuid", bf)?.GetValue(item)?.ToString()
+					        ?? ct.GetField("carGuid",    bf)?.GetValue(item)?.ToString();
+
+					// Fallback: TrainCar (physical layer) → logicCar.carGuid
 					if (string.IsNullOrEmpty(g))
 					{
-						object lc = ct.GetProperty("logicCar", bf)?.GetValue(car)
-						         ?? ct.GetField("logicCar",    bf)?.GetValue(car);
+						object lc = ct.GetProperty("logicCar", bf)?.GetValue(item)
+						         ?? ct.GetField("logicCar",    bf)?.GetValue(item);
 						if (lc != null)
 						{
 							var lct = lc.GetType();
@@ -715,11 +724,12 @@ public class GRDNConnectBehaviour : MonoBehaviour
 						}
 					}
 
-					if (!string.IsNullOrEmpty(g)) guids.Add(g);
+					// Only add if it looks like a real GUID (length sanity check)
+					if (!string.IsNullOrEmpty(g) && g.Length >= 8) guids.Add(g);
 				}
 			}
 
-			// Recurse into nested task lists (e.g. parallel/sequential composites)
+			// Recurse into nested task lists (SequentialTasks, ParallelTasks, etc.)
 			var sub = t.GetMethod("GetTaskList",
 				BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
 			if (sub?.Invoke(task, null) is IEnumerable subTasks)
