@@ -169,6 +169,10 @@ public class GRDNConnectBehaviour : MonoBehaviour
 			{
 				HandleGetLocos(ctx.Response);
 			}
+			else if (ctx.Request.HttpMethod == "GET" && text == "/debug-locos")
+			{
+				HandleDebugLocos(ctx.Response);
+			}
 			else if (ctx.Request.HttpMethod == "POST" && text == "/complete-job")
 			{
 				HandleCompleteJob(ctx.Request, ctx.Response);
@@ -475,6 +479,72 @@ public class GRDNConnectBehaviour : MonoBehaviour
 	}
 
 	// -------------------------------------------------------------------------
+	// GET /debug-locos
+	// Human-readable dump of the job→GUID→loco matching process.
+	// Hit this in a browser while in-game to diagnose why jobs aren't appearing.
+	private void HandleDebugLocos(HttpListenerResponse res)
+	{
+		var sb = new StringBuilder();
+		try
+		{
+			const BindingFlags bf = BindingFlags.Public | BindingFlags.NonPublic
+			                      | BindingFlags.Instance | BindingFlags.FlattenHierarchy;
+
+			// Build carGuid → jobs map (same as /locos)
+			var carGuidToJobs = new Dictionary<string, List<Job>>();
+			var activeJobs = JobCompletionHelper.GetCurrentJobsForApi();
+			if (activeJobs != null)
+			{
+				foreach (var job in activeJobs)
+				{
+					var guids = GetCarGuidsFromJob(job).ToList();
+					sb.AppendLine($"JOB {job.ID} ({job.jobType}) → {guids.Count} car GUIDs: {string.Join(", ", guids.Select(g => g.Substring(0, Math.Min(8, g.Length)) + "..."))}");
+					foreach (var g in guids)
+					{
+						if (!carGuidToJobs.TryGetValue(g, out var list))
+							carGuidToJobs[g] = list = new List<Job>();
+						if (!list.Contains(job)) list.Add(job);
+					}
+				}
+			}
+			else
+			{
+				sb.AppendLine("activeJobs is NULL");
+			}
+
+			sb.AppendLine($"\nTotal GUIDs in map: {carGuidToJobs.Count}");
+
+			// Check each loco
+			TrainCar[] allCars = UnityEngine.Object.FindObjectsOfType<TrainCar>();
+			foreach (var loco in allCars)
+			{
+				if (!loco.IsLoco) continue;
+				sb.AppendLine($"\nLOCO: {loco.ID} | trainset cars: {loco.trainset?.cars?.Count ?? 0}");
+				if (loco.trainset?.cars == null) { sb.AppendLine("  (no trainset)"); continue; }
+
+				foreach (var car in loco.trainset.cars)
+				{
+					if (car == null) { sb.AppendLine("  car: null"); continue; }
+					var guid = car.logicCar?.carGuid ?? "(no logicCar)";
+					var shortGuid = guid.Length > 8 ? guid.Substring(0, 8) + "..." : guid;
+					var matched = carGuidToJobs.ContainsKey(guid);
+					sb.AppendLine($"  car: {car.ID ?? "?"} | logicCar.carGuid: {shortGuid} | job match: {matched}");
+				}
+			}
+		}
+		catch (Exception ex)
+		{
+			sb.AppendLine("ERROR: " + ex.Message + "\n" + ex.StackTrace);
+		}
+
+		res.StatusCode = 200;
+		res.ContentType = "text/plain";
+		var bytes = Encoding.UTF8.GetBytes(sb.ToString());
+		res.ContentLength64 = bytes.Length;
+		res.OutputStream.Write(bytes, 0, bytes.Length);
+		res.OutputStream.Close();
+	}
+
 	// GET /locos
 	// Returns every locomotive in the world with the jobs currently on its
 	// trainset, matched by car GUID through the active job task trees.
