@@ -582,40 +582,45 @@ public class GRDNConnectBehaviour : MonoBehaviour
 
 		try
 		{
-			// Inspect every TrainCar in the scene; only process locos
+			// Build carGuid → jobs map via fixed recursive task-tree extraction
+			var carGuidToJobs = new Dictionary<string, List<Job>>();
+			var activeJobs = JobCompletionHelper.GetCurrentJobsForApi();
+			if (activeJobs != null)
+			{
+				foreach (var job in activeJobs)
+				{
+					foreach (var guid in GetCarGuidsFromJob(job))
+					{
+						if (!carGuidToJobs.TryGetValue(guid, out var jlist))
+							carGuidToJobs[guid] = jlist = new List<Job>();
+						if (!jlist.Contains(job)) jlist.Add(job);
+					}
+				}
+			}
+			Main.ModEntry.Logger.Log($"[GRDNConnect] /locos: {carGuidToJobs.Count} car GUID(s) mapped");
+
+			// Match locos by walking each trainset car's logicCar GUID
 			TrainCar[] allCars = UnityEngine.Object.FindObjectsOfType<TrainCar>();
 			foreach (var loco in allCars)
 			{
 				if (!loco.IsLoco) continue;
 
-				// For each car in the trainset, scan logicCar for any field/property
-				// that IS a Job object — the car knows its own job, regardless of task structure.
 				var seenJobIds = new HashSet<string>();
 				var locoJobs   = new List<Job>();
-				if (loco.trainset != null)
-				{
-					const BindingFlags bf = BindingFlags.Public | BindingFlags.NonPublic
-					                      | BindingFlags.Instance | BindingFlags.FlattenHierarchy;
-					foreach (var coupled in loco.trainset.cars)
-					{
-						if (coupled?.logicCar == null) continue;
-						var lc  = coupled.logicCar;
-						var lct = ((object)lc).GetType();
 
-						foreach (var fi in lct.GetFields(bf))
-						{
-							try { if (fi.GetValue(lc) is Job j && seenJobIds.Add(j.ID)) locoJobs.Add(j); }
-							catch { }
-						}
-						foreach (var pi in lct.GetProperties(bf))
-						{
-							try { if (pi.GetValue(lc) is Job j && seenJobIds.Add(j.ID)) locoJobs.Add(j); }
-							catch { }
-						}
+				if (loco.trainset?.cars != null)
+				{
+					foreach (var car in loco.trainset.cars)
+					{
+						var guid = car?.logicCar?.carGuid;
+						if (string.IsNullOrEmpty(guid)) continue;
+						if (carGuidToJobs.TryGetValue(guid, out var jobs))
+							foreach (var job in jobs)
+								if (seenJobIds.Add(job.ID)) locoJobs.Add(job);
 					}
 				}
 
-				Main.ModEntry.Logger.Log($"[GRDNConnect] {loco.ID}: {locoJobs.Count} job(s) found via car scan");
+				Main.ModEntry.Logger.Log($"[GRDNConnect] {loco.ID}: {locoJobs.Count} job(s) found via GUID map");
 
 				if (!firstLoco) sb.Append(",");
 				firstLoco = false;
@@ -690,11 +695,12 @@ public class GRDNConnectBehaviour : MonoBehaviour
 	/// Recursively extracts carGuid strings from a task object (and any sub-tasks).
 	/// Scans every field and property on the task — no hardcoded field names needed.
 	/// For each enumerable member, tries to read carGuid directly (Car/logic layer)
-	/// or via logicCar.carGuid (TrainCar/physical layer).
+	/// or via logicCar.carGuid (TrainCar/physical layer). When an item is neither
+	/// (e.g. a CarsPerTrack wrapper), recurses one level deeper into that item.
 	/// </summary>
-	private void ExtractCarGuids(object task, List<string> guids)
+	private void ExtractCarGuids(object task, List<string> guids, int depth = 0)
 	{
-		if (task == null) return;
+		if (task == null || depth > 5) return;
 		try
 		{
 			Type t = task.GetType();
@@ -741,8 +747,15 @@ public class GRDNConnectBehaviour : MonoBehaviour
 						}
 					}
 
-					// Only add if it looks like a real GUID (length sanity check)
-					if (!string.IsNullOrEmpty(g) && g.Length >= 8) guids.Add(g);
+					if (!string.IsNullOrEmpty(g) && g.Length >= 8)
+					{
+						guids.Add(g);
+					}
+					else if (!(item is UnityEngine.Object) && !(item is string))
+					{
+						// Wrapper object (e.g. CarsPerTrack) — look inside it for Car lists
+						ExtractCarGuids(item, guids, depth + 1);
+					}
 				}
 			}
 
@@ -751,7 +764,7 @@ public class GRDNConnectBehaviour : MonoBehaviour
 				BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
 			if (sub?.Invoke(task, null) is IEnumerable subTasks)
 				foreach (var subTask in subTasks)
-					ExtractCarGuids(subTask, guids);
+					ExtractCarGuids(subTask, guids, depth + 1);
 		}
 		catch { }
 	}
