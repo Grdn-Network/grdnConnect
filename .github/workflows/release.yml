@@ -1,0 +1,45 @@
+name: Release
+
+# Triggers only when a version tag is pushed (e.g. v1.2.0)
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest  # Required: net48 + WinForms needs Windows
+
+    # Allow the workflow to create releases via GITHUB_TOKEN
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.x'   # SDK only needed for MSBuild; net48 TFM is pre-installed on windows-latest
+
+      - name: Restore NuGet packages
+        run: dotnet restore GRDNConnect.csproj
+
+      - name: Build (Release)
+        run: dotnet build GRDNConnect.csproj -c Release --no-restore
+
+      - name: Package
+        run: |
+          New-Item -ItemType Directory -Path "release\GRDNConnect" -Force | Out-Null
+          Copy-Item "bin\Release\GRDNConnect.dll" "release\GRDNConnect\"
+          Copy-Item "Info.json" "release\GRDNConnect\"
+          Compress-Archive -Path "release\GRDNConnect" -DestinationPath "GRDNConnect-${{ github.ref_name }}.zip"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "GRDNConnect ${{ github.ref_name }}"
+          files: "GRDNConnect-${{ github.ref_name }}.zip"
+          generate_release_notes: true
+          fail_on_unmatched_files: true
