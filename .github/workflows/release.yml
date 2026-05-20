@@ -29,13 +29,6 @@ jobs:
       - name: Build (Release)
         run: dotnet build GRDNConnect.csproj -c Release --no-restore
 
-      - name: Set version in Info.json
-        run: |
-          $version = "${{ github.ref_name }}".TrimStart('v')
-          $info = Get-Content "Info.json" -Raw | ConvertFrom-Json
-          $info.Version = $version
-          $info | ConvertTo-Json -Depth 10 | Set-Content "Info.json" -Encoding UTF8
-
       - name: Package
         run: |
           New-Item -ItemType Directory -Path "release\GRDNConnect" -Force | Out-Null

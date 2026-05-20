@@ -559,47 +559,40 @@ public class GRDNConnectBehaviour : MonoBehaviour
 
 		try
 		{
-			// Build carGuid → jobs lookup from every currently active job
-			var carGuidToJobs = new Dictionary<string, List<Job>>();
-			var activeJobs = JobCompletionHelper.GetCurrentJobsForApi();
-			if (activeJobs != null)
-			{
-				foreach (var job in activeJobs)
-				{
-					foreach (var guid in GetCarGuidsFromJob(job))
-					{
-						if (!carGuidToJobs.TryGetValue(guid, out var list))
-							carGuidToJobs[guid] = list = new List<Job>();
-						if (!list.Contains(job))
-							list.Add(job);
-					}
-				}
-			}
-
-			Main.ModEntry.Logger.Log(
-				"[GRDNConnect] /locos: " + (activeJobs?.Count() ?? 0) + " job(s), " +
-				carGuidToJobs.Count + " car GUID(s) mapped");
-
 			// Inspect every TrainCar in the scene; only process locos
 			TrainCar[] allCars = UnityEngine.Object.FindObjectsOfType<TrainCar>();
 			foreach (var loco in allCars)
 			{
 				if (!loco.IsLoco) continue;
 
-				// Walk all cars coupled to this loco and collect unique jobs
+				// For each car in the trainset, scan logicCar for any field/property
+				// that IS a Job object — the car knows its own job, regardless of task structure.
 				var seenJobIds = new HashSet<string>();
 				var locoJobs   = new List<Job>();
 				if (loco.trainset != null)
 				{
+					const BindingFlags bf = BindingFlags.Public | BindingFlags.NonPublic
+					                      | BindingFlags.Instance | BindingFlags.FlattenHierarchy;
 					foreach (var coupled in loco.trainset.cars)
 					{
 						if (coupled?.logicCar == null) continue;
-						string cGuid = coupled.logicCar.carGuid;
-						if (!string.IsNullOrEmpty(cGuid) && carGuidToJobs.TryGetValue(cGuid, out var js))
-							foreach (var j in js)
-								if (seenJobIds.Add(j.ID)) locoJobs.Add(j);
+						var lc  = coupled.logicCar;
+						var lct = ((object)lc).GetType();
+
+						foreach (var fi in lct.GetFields(bf))
+						{
+							try { if (fi.GetValue(lc) is Job j && seenJobIds.Add(j.ID)) locoJobs.Add(j); }
+							catch { }
+						}
+						foreach (var pi in lct.GetProperties(bf))
+						{
+							try { if (pi.GetValue(lc) is Job j && seenJobIds.Add(j.ID)) locoJobs.Add(j); }
+							catch { }
+						}
 					}
 				}
+
+				Main.ModEntry.Logger.Log($"[GRDNConnect] {loco.ID}: {locoJobs.Count} job(s) found via car scan");
 
 				if (!firstLoco) sb.Append(",");
 				firstLoco = false;
