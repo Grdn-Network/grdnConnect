@@ -696,9 +696,25 @@ public class GRDNConnectBehaviour : MonoBehaviour
 				foreach (var car in cars)
 				{
 					if (car == null) continue;
-					var ct   = car.GetType();
+					var ct = car.GetType();
+
+					// Try direct carGuid (Car / logic layer)
 					string g = ct.GetProperty("carGuid", bf)?.GetValue(car)?.ToString()
 					        ?? ct.GetField("carGuid",    bf)?.GetValue(car)?.ToString();
+
+					// Fallback: object may be a TrainCar (physical layer) — check logicCar.carGuid
+					if (string.IsNullOrEmpty(g))
+					{
+						object lc = ct.GetProperty("logicCar", bf)?.GetValue(car)
+						         ?? ct.GetField("logicCar",    bf)?.GetValue(car);
+						if (lc != null)
+						{
+							var lct = lc.GetType();
+							g = lct.GetProperty("carGuid", bf)?.GetValue(lc)?.ToString()
+							 ?? lct.GetField("carGuid",    bf)?.GetValue(lc)?.ToString();
+						}
+					}
+
 					if (!string.IsNullOrEmpty(g)) guids.Add(g);
 				}
 			}
