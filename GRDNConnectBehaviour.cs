@@ -653,36 +653,62 @@ public class GRDNConnectBehaviour : MonoBehaviour
 	}
 
 	/// <summary>
-	/// Walks a Job's task tree via reflection and returns all logicCar carGuids
-	/// referenced by any task. Works across DV versions without a compile-time
-	/// dependency on specific Task subclasses.
+	/// Returns all logic-car carGuids associated with a Job.
+	///
+	/// Primary path: job.jobChainController.carsForJobChain
+	///   Set at chain creation for every job type (Transport, ShuntingLoad, etc.)
+	///   — no task-tree traversal needed, works regardless of accept state.
+	///
+	/// Fallback: recursive task-tree scan (works for Transport / WarehouseTask
+	///   which expose a 'cars' field; kept for safety).
 	/// </summary>
 	private IEnumerable<string> GetCarGuidsFromJob(Job job)
 	{
 		var guids = new List<string>();
 		try
 		{
-			// Job stores its root tasks in a field/property called 'tasks'.
-			// GetTaskList() lives on composite Task subclasses — not on Job itself.
 			const BindingFlags bf = BindingFlags.Public | BindingFlags.NonPublic
 			                      | BindingFlags.Instance | BindingFlags.FlattenHierarchy;
 			Type jobType = ((object)job).GetType();
 
+			// ── Primary: jobChainController.carsForJobChain ──────────────────────
+			object jcc = jobType.GetField("jobChainController", bf)?.GetValue(job)
+			          ?? jobType.GetProperty("jobChainController", bf)?.GetValue(job);
+
+			if (jcc != null)
+			{
+				Type jccType = jcc.GetType();
+				object carsObj = jccType.GetField("carsForJobChain", bf)?.GetValue(jcc)
+				              ?? jccType.GetProperty("carsForJobChain", bf)?.GetValue(jcc);
+
+				if (carsObj is IEnumerable carsList)
+				{
+					foreach (var car in carsList)
+					{
+						if (car == null) continue;
+						Type ct = car.GetType();
+						string g = ct.GetProperty("carGuid", bf)?.GetValue(car)?.ToString()
+						        ?? ct.GetField("carGuid",    bf)?.GetValue(car)?.ToString();
+						if (!string.IsNullOrEmpty(g) && g.Length >= 8) guids.Add(g);
+					}
+				}
+
+				if (guids.Count > 0)
+				{
+					Main.ModEntry.Logger.Log($"[GRDNConnect] Job '{job.ID}': {guids.Count} car(s) via carsForJobChain");
+					return guids;
+				}
+			}
+
+			// ── Fallback: recursive task-tree scan ────────────────────────────────
 			object taskList = jobType.GetField("tasks", bf)?.GetValue(job)
 			               ?? jobType.GetProperty("tasks", bf)?.GetValue(job);
 
 			if (taskList is IEnumerable tasks)
-			{
 				foreach (var task in tasks)
-					ExtractCarGuids(task, guids);
-			}
-			else
-			{
-				Main.ModEntry.Logger.Warning(
-					"[GRDNConnect] Job '" + job.ID + "': 'tasks' field not found — fields: " +
-					string.Join(", ", ((object)job).GetType()
-						.GetFields(bf).Select(f => f.Name)));
-			}
+					ExtractCarGuids(task, guids, 0);
+
+			Main.ModEntry.Logger.Log($"[GRDNConnect] Job '{job.ID}': {guids.Count} car(s) via task-tree fallback");
 		}
 		catch (Exception ex)
 		{
