@@ -490,7 +490,8 @@ public class GRDNConnectBehaviour : MonoBehaviour
 			const BindingFlags bf = BindingFlags.Public | BindingFlags.NonPublic
 			                      | BindingFlags.Instance | BindingFlags.FlattenHierarchy;
 
-			// Build carGuid → jobs map (same as /locos)
+			// ── OLD APPROACH: GUID map from task trees (kept for comparison) ──────
+			sb.AppendLine("=== OLD APPROACH: task-tree GUID map ===");
 			var carGuidToJobs = new Dictionary<string, List<Job>>();
 			var activeJobs = JobCompletionHelper.GetCurrentJobsForApi();
 			if (activeJobs != null)
@@ -511,10 +512,10 @@ public class GRDNConnectBehaviour : MonoBehaviour
 			{
 				sb.AppendLine("activeJobs is NULL");
 			}
+			sb.AppendLine($"Total GUIDs in map: {carGuidToJobs.Count}");
 
-			sb.AppendLine($"\nTotal GUIDs in map: {carGuidToJobs.Count}");
-
-			// Check each loco
+			// ── NEW APPROACH: car → logicCar → Job field scan ────────────────────
+			sb.AppendLine("\n=== NEW APPROACH: logicCar field scan ===");
 			TrainCar[] allCars = UnityEngine.Object.FindObjectsOfType<TrainCar>();
 			foreach (var loco in allCars)
 			{
@@ -522,13 +523,35 @@ public class GRDNConnectBehaviour : MonoBehaviour
 				sb.AppendLine($"\nLOCO: {loco.ID} | trainset cars: {loco.trainset?.cars?.Count ?? 0}");
 				if (loco.trainset?.cars == null) { sb.AppendLine("  (no trainset)"); continue; }
 
-				foreach (var car in loco.trainset.cars)
+				foreach (var coupled in loco.trainset.cars)
 				{
-					if (car == null) { sb.AppendLine("  car: null"); continue; }
-					var guid = car.logicCar?.carGuid ?? "(no logicCar)";
+					if (coupled == null) { sb.AppendLine("  car: null"); continue; }
+					var guid = coupled.logicCar?.carGuid ?? "(no logicCar)";
 					var shortGuid = guid.Length > 8 ? guid.Substring(0, 8) + "..." : guid;
-					var matched = carGuidToJobs.ContainsKey(guid);
-					sb.AppendLine($"  car: {car.ID ?? "?"} | logicCar.carGuid: {shortGuid} | job match: {matched}");
+					var oldMatch = carGuidToJobs.ContainsKey(guid);
+
+					// New scan: find Job refs directly on logicCar
+					var foundJobs = new List<string>();
+					if (coupled.logicCar != null)
+					{
+						var lc  = coupled.logicCar;
+						var lct = ((object)lc).GetType();
+						foreach (var fi in lct.GetFields(bf))
+						{
+							try { if (fi.GetValue(lc) is Job j) foundJobs.Add($"{fi.Name}={j.ID}"); }
+							catch { }
+						}
+						foreach (var pi in lct.GetProperties(bf))
+						{
+							try { if (pi.GetValue(lc) is Job j) foundJobs.Add($"{pi.Name}={j.ID}"); }
+							catch { }
+						}
+					}
+
+					string newResult = foundJobs.Count > 0
+						? string.Join(", ", foundJobs)
+						: "none";
+					sb.AppendLine($"  car: {coupled.ID ?? "?"} | guid: {shortGuid} | old: {oldMatch} | new: {newResult}");
 				}
 			}
 		}
