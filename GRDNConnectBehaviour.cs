@@ -506,7 +506,7 @@ public class GRDNConnectBehaviour : MonoBehaviour
 			}
 
 			// Inspect every TrainCar in the scene; only process locos
-			TrainCar[] allCars = Object.FindObjectsOfType<TrainCar>();
+			TrainCar[] allCars = UnityEngine.Object.FindObjectsOfType<TrainCar>();
 			foreach (var loco in allCars)
 			{
 				if (!loco.IsLoco) continue;
@@ -529,7 +529,7 @@ public class GRDNConnectBehaviour : MonoBehaviour
 				if (!firstLoco) sb.Append(",");
 				firstLoco = false;
 
-				string locoId   = Escape(loco.ID ?? loco.carGuid ?? "unknown");
+				string locoId   = Escape(loco.ID ?? loco.logicCar?.carGuid ?? "unknown");
 				string locoType = Escape(((object)loco.carType).ToString());
 
 				sb.Append($"{{\"locoId\":\"{locoId}\",\"locoType\":\"{locoType}\",\"jobs\":[");
