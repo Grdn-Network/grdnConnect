@@ -606,10 +606,11 @@ public class GRDNConnectBehaviour : MonoBehaviour
 				{
 					if (!firstJob) sb.Append(",");
 					firstJob = false;
-					string dep = Escape(GetChainDataField(job, "chainOriginYardId")      ?? "—");
-					string des = Escape(GetChainDataField(job, "chainDestinationYardId") ?? "—");
-					string jt  = Escape(((object)job.jobType).ToString());
-					sb.Append($"{{\"jobId\":\"{Escape(job.ID)}\",\"type\":\"{jt}\",\"departure\":\"{dep}\",\"destination\":\"{des}\"}}");
+					string dep   = Escape(GetChainDataField(job, "chainOriginYardId")      ?? "—");
+					string des   = Escape(GetChainDataField(job, "chainDestinationYardId") ?? "—");
+					string jt    = Escape(((object)job.jobType).ToString());
+					string state = Escape(JobCompletionHelper.GetJobState(job) ?? "Unknown");
+					sb.Append($"{{\"jobId\":\"{Escape(job.ID)}\",\"type\":\"{jt}\",\"state\":\"{state}\",\"departure\":\"{dep}\",\"destination\":\"{des}\"}}");
 				}
 				sb.Append("]}");
 			}
