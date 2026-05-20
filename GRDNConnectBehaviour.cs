@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
 using System.IO;
 using System.Net;
 using System.Reflection;
@@ -505,6 +506,10 @@ public class GRDNConnectBehaviour : MonoBehaviour
 				}
 			}
 
+			Main.ModEntry.Logger.Log(
+				"[GRDNConnect] /locos: " + (activeJobs?.Count() ?? 0) + " job(s), " +
+				carGuidToJobs.Count + " car GUID(s) mapped");
+
 			// Inspect every TrainCar in the scene; only process locos
 			TrainCar[] allCars = UnityEngine.Object.FindObjectsOfType<TrainCar>();
 			foreach (var loco in allCars)
@@ -565,13 +570,32 @@ public class GRDNConnectBehaviour : MonoBehaviour
 		var guids = new List<string>();
 		try
 		{
-			var method = job.GetType().GetMethod("GetTaskList",
-				BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-			if (method?.Invoke(job, null) is IEnumerable tasks)
+			// Job stores its root tasks in a field/property called 'tasks'.
+			// GetTaskList() lives on composite Task subclasses — not on Job itself.
+			const BindingFlags bf = BindingFlags.Public | BindingFlags.NonPublic
+			                      | BindingFlags.Instance | BindingFlags.FlattenHierarchy;
+			Type jobType = ((object)job).GetType();
+
+			object taskList = jobType.GetField("tasks", bf)?.GetValue(job)
+			               ?? jobType.GetProperty("tasks", bf)?.GetValue(job);
+
+			if (taskList is IEnumerable tasks)
+			{
 				foreach (var task in tasks)
 					ExtractCarGuids(task, guids);
+			}
+			else
+			{
+				Main.ModEntry.Logger.Warning(
+					"[GRDNConnect] Job '" + job.ID + "': 'tasks' field not found — fields: " +
+					string.Join(", ", ((object)job).GetType()
+						.GetFields(bf).Select(f => f.Name)));
+			}
 		}
-		catch { }
+		catch (Exception ex)
+		{
+			Main.ModEntry.Logger.Error("[GRDNConnect] GetCarGuidsFromJob: " + ex.Message);
+		}
 		return guids;
 	}
 
