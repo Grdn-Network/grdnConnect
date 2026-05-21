@@ -582,24 +582,28 @@ public class GRDNConnectBehaviour : MonoBehaviour
 
 		try
 		{
-			// Build carGuid → jobs map via fixed recursive task-tree extraction
-			var carGuidToJobs = new Dictionary<string, List<Job>>();
-			var activeJobs = JobCompletionHelper.GetCurrentJobsForApi();
-			if (activeJobs != null)
+			// When live train board is disabled, return locos with empty job arrays
+			// so the bot falls back to manual /assign entries.
+			Dictionary<string, List<Job>> carGuidToJobs = null;
+			if (Main.Settings.LiveTrainBoardEnabled)
 			{
-				foreach (var job in activeJobs)
+				carGuidToJobs = new Dictionary<string, List<Job>>();
+				var activeJobs = JobCompletionHelper.GetCurrentJobsForApi();
+				if (activeJobs != null)
 				{
-					foreach (var guid in GetCarGuidsFromJob(job))
+					foreach (var job in activeJobs)
 					{
-						if (!carGuidToJobs.TryGetValue(guid, out var jlist))
-							carGuidToJobs[guid] = jlist = new List<Job>();
-						if (!jlist.Contains(job)) jlist.Add(job);
+						foreach (var guid in GetCarGuidsFromJob(job))
+						{
+							if (!carGuidToJobs.TryGetValue(guid, out var jlist))
+								carGuidToJobs[guid] = jlist = new List<Job>();
+							if (!jlist.Contains(job)) jlist.Add(job);
+						}
 					}
 				}
+				Main.ModEntry.Logger.Log($"[GRDNConnect] /locos: {carGuidToJobs.Count} car GUID(s) mapped");
 			}
-			Main.ModEntry.Logger.Log($"[GRDNConnect] /locos: {carGuidToJobs.Count} car GUID(s) mapped");
 
-			// Match locos by walking each trainset car's logicCar GUID
 			TrainCar[] allCars = UnityEngine.Object.FindObjectsOfType<TrainCar>();
 			foreach (var loco in allCars)
 			{
@@ -608,7 +612,7 @@ public class GRDNConnectBehaviour : MonoBehaviour
 				var seenJobIds = new HashSet<string>();
 				var locoJobs   = new List<Job>();
 
-				if (loco.trainset?.cars != null)
+				if (carGuidToJobs != null && loco.trainset?.cars != null)
 				{
 					foreach (var car in loco.trainset.cars)
 					{
@@ -619,8 +623,6 @@ public class GRDNConnectBehaviour : MonoBehaviour
 								if (seenJobIds.Add(job.ID)) locoJobs.Add(job);
 					}
 				}
-
-				Main.ModEntry.Logger.Log($"[GRDNConnect] {loco.ID}: {locoJobs.Count} job(s) found via GUID map");
 
 				if (!firstLoco) sb.Append(",");
 				firstLoco = false;
@@ -638,7 +640,11 @@ public class GRDNConnectBehaviour : MonoBehaviour
 					string des   = Escape(GetChainDataField(job, "chainDestinationYardId") ?? "—");
 					string jt    = Escape(((object)job.jobType).ToString());
 					string state = Escape(JobCompletionHelper.GetJobState(job) ?? "Unknown");
-					sb.Append($"{{\"jobId\":\"{Escape(job.ID)}\",\"type\":\"{jt}\",\"state\":\"{state}\",\"departure\":\"{dep}\",\"destination\":\"{des}\"}}");
+					string trk   = Escape(GetDestinationTrack(job) ?? "—");
+					string cargo = Escape(GetJobCargoType(job)      ?? "—");
+					sb.Append($"{{\"jobId\":\"{Escape(job.ID)}\",\"type\":\"{jt}\",\"state\":\"{state}\"," +
+					          $"\"departure\":\"{dep}\",\"destination\":\"{des}\"," +
+					          $"\"track\":\"{trk}\",\"cargo\":\"{cargo}\"}}");
 				}
 				sb.Append("]}");
 			}
@@ -650,6 +656,127 @@ public class GRDNConnectBehaviour : MonoBehaviour
 
 		sb.Append("]");
 		SendJson(res, 200, sb.ToString());
+	}
+
+	/// <summary>
+	/// Walks the job's task tree and returns the FullDisplayID of the first
+	/// destinationTrack found (e.g. "HB-F-3"). Works for Transport tasks;
+	/// returns null for job types without a track-level destination.
+	/// </summary>
+	private string GetDestinationTrack(Job job)
+	{
+		try
+		{
+			const BindingFlags bf = BindingFlags.Public | BindingFlags.NonPublic
+			                      | BindingFlags.Instance | BindingFlags.FlattenHierarchy;
+			Type jobType = ((object)job).GetType();
+			object taskList = jobType.GetField("tasks", bf)?.GetValue(job)
+			               ?? jobType.GetProperty("tasks", bf)?.GetValue(job);
+			if (taskList is IEnumerable tasks)
+				return FindTrackInTasks(tasks, bf);
+		}
+		catch { }
+		return null;
+	}
+
+	private string FindTrackInTasks(IEnumerable tasks, BindingFlags bf)
+	{
+		foreach (var task in tasks)
+		{
+			if (task == null) continue;
+			Type t = task.GetType();
+
+			// TransportTask.destinationTrack → Track.ID → TrackID.FullDisplayID
+			object trackObj = t.GetField("destinationTrack", bf)?.GetValue(task)
+			               ?? t.GetProperty("destinationTrack", bf)?.GetValue(task);
+			if (trackObj != null)
+			{
+				object trackId = trackObj.GetType().GetProperty("ID", bf)?.GetValue(trackObj)
+				              ?? trackObj.GetType().GetField("<ID>k__BackingField", bf)?.GetValue(trackObj);
+				if (trackId != null)
+				{
+					string full = trackId.GetType().GetProperty("FullDisplayID", bf)?.GetValue(trackId)?.ToString();
+					if (!string.IsNullOrEmpty(full)) return full;
+				}
+			}
+
+			// Recurse into SequentialTasks.tasks / ParallelTasks.tasks
+			object sub = t.GetField("tasks", bf)?.GetValue(task)
+			          ?? t.GetProperty("tasks", bf)?.GetValue(task);
+			if (sub is IEnumerable subTasks)
+			{
+				string found = FindTrackInTasks(subTasks, bf);
+				if (found != null) return found;
+			}
+		}
+		return null;
+	}
+
+	/// <summary>
+	/// Returns a human-readable cargo type string from the job's tasks.
+	/// Checks WarehouseTask.cargoType first (ShuntingLoad/Unload), then
+	/// TransportTask.transportedCargoPerCar for haul jobs.
+	/// </summary>
+	private string GetJobCargoType(Job job)
+	{
+		try
+		{
+			const BindingFlags bf = BindingFlags.Public | BindingFlags.NonPublic
+			                      | BindingFlags.Instance | BindingFlags.FlattenHierarchy;
+			Type jobType = ((object)job).GetType();
+			object taskList = jobType.GetField("tasks", bf)?.GetValue(job)
+			               ?? jobType.GetProperty("tasks", bf)?.GetValue(job);
+			if (taskList is IEnumerable tasks)
+				return FindCargoInTasks(tasks, bf);
+		}
+		catch { }
+		return null;
+	}
+
+	private string FindCargoInTasks(IEnumerable tasks, BindingFlags bf)
+	{
+		foreach (var task in tasks)
+		{
+			if (task == null) continue;
+			Type t = task.GetType();
+
+			// WarehouseTask.cargoType (ShuntingLoad / ShuntingUnload)
+			object cargo = t.GetField("cargoType", bf)?.GetValue(task)
+			            ?? t.GetProperty("cargoType", bf)?.GetValue(task);
+			if (cargo != null)
+			{
+				string s = cargo.ToString();
+				if (s != "None" && s != "0") return s;
+			}
+
+			// TransportTask.transportedCargoPerCar — grab first non-empty entry
+			object perCar = t.GetField("transportedCargoPerCar", bf)?.GetValue(task);
+			if (perCar is IEnumerable perCarList)
+			{
+				foreach (var entry in perCarList)
+				{
+					if (entry == null) continue;
+					var et = entry.GetType();
+					object ct = et.GetField("cargoType", bf)?.GetValue(entry)
+					         ?? et.GetProperty("cargoType", bf)?.GetValue(entry);
+					if (ct != null)
+					{
+						string s = ct.ToString();
+						if (s != "None" && s != "0") return s;
+					}
+				}
+			}
+
+			// Recurse
+			object sub = t.GetField("tasks", bf)?.GetValue(task)
+			          ?? t.GetProperty("tasks", bf)?.GetValue(task);
+			if (sub is IEnumerable subTasks)
+			{
+				string found = FindCargoInTasks(subTasks, bf);
+				if (found != null) return found;
+			}
+		}
+		return null;
 	}
 
 	/// <summary>
