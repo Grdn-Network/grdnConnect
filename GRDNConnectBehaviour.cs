@@ -29,6 +29,9 @@ public class GRDNConnectBehaviour : MonoBehaviour
 		{
 			Main.ModEntry.Logger.Error("[GRDNConnect] Failed to start: " + ex.Message);
 		}
+
+		// Optional CommsRadioAPI integration — silently skipped if mod is absent.
+		RadioIntegration.TryInit(this);
 	}
 
 	/// <summary>
