@@ -219,9 +219,10 @@ public class DefectMonitor : MonoBehaviour
                     int    carCount = loco.trainset?.cars?.Count ?? 1;
                     int    speedMph = Mathf.RoundToInt(Mathf.Abs(loco.GetForwardSpeed()) * 2.237f);
 
-                    string msg = BuildConsistMessage(train, carCount, speedMph);
+                    string msg          = BuildConsistMessage(train, carCount, speedMph);
+                    string consistDetail = $"{carCount} {speedMph}";  // bot uses this to stitch clips
                     Main.ModEntry.Logger.Log($"[Defect] Consist check — train {train}, {carCount} cars, {speedMph} mph");
-                    StartCoroutine(PostAlert(pushUrl, train, "Consist Check", null, msg));
+                    StartCoroutine(PostAlert(pushUrl, train, "Consist Check", consistDetail, msg));
                 }
             }
 
