@@ -36,6 +36,7 @@ using UnityEngine.Networking;
 public static class RadioIntegration
 {
     private static MonoBehaviour _host;
+    private static Assembly      _apiAssembly;
 
     public static void TryInit(MonoBehaviour coroutineHost)
     {
@@ -57,18 +58,26 @@ public static class RadioIntegration
             return;
         }
 
-        // 3. Register our mode with CommsRadioAPI via reflection
+        _apiAssembly = apiMod.Assembly;
+
+        // 3. Register our modes with CommsRadioAPI via reflection.
         //    CommsRadioAPI exposes ControllerAPI.AddMode(AStateBehaviour).
         //    We discover the exact type/method name at runtime.
         try
         {
-            var mode = new GRDNRadioMode(channels, OnChannelSelected);
-            if (!RegisterMode(apiMod.Assembly, mode))
+            // GRDN Radio — cycle through VC channels
+            var radioMode = new GRDNRadioMode(channels, OnChannelSelected);
+            if (!RegisterMode(_apiAssembly, radioMode))
             {
                 Main.ModEntry.Logger.Warning("[GRDNConnect] Could not find CommsRadioAPI registration method.");
                 return;
             }
             Main.ModEntry.Logger.Log($"[GRDNConnect] Radio mode registered — {channels.Count} channel(s).");
+
+            // GRDN Crew — in-game loco assignment / mid-op re-assign
+            var crewMode = new GRDNCrewMode(_host);
+            RegisterMode(_apiAssembly, crewMode); // best-effort; log inside RegisterMode if it fails
+            Main.ModEntry.Logger.Log("[GRDNConnect] Crew mode registered.");
         }
         catch (Exception ex)
         {
@@ -166,29 +175,35 @@ public static class RadioIntegration
     // ── Player loco detection ─────────────────────────────────────────────────
 
     /// <summary>
-    /// Returns the ID of the loco the local player is currently in (e.g. "DE2-034").
+    /// Returns the NUMERIC portion of the local player's current loco ID.
+    /// e.g. "DE2-034" → "034"  |  "DH4-201" → "201"
+    /// This matches the train number format players enter in /setcrew on Discord.
     /// Returns null if the player is not inside a locomotive.
     /// </summary>
-    private static string GetPlayerTrainNumber()
+    internal static string GetPlayerTrainNumber()
     {
         try
         {
-            // PlayerManager.Car is the TrainCar the local player is sitting in.
-            // It is null when outside any car.
             var car = PlayerManager.Car;
             if (car == null) return null;
 
-            // Walk up to the loco: if the player is in a wagon, find the loco
-            // at the front of the trainset.
-            if (car.IsLoco) return car.ID;
-
-            if (car.trainset?.cars != null)
+            // Walk up to the loco if the player is in a coupled wagon
+            TrainCar loco = null;
+            if (car.IsLoco)
+            {
+                loco = car;
+            }
+            else if (car.trainset?.cars != null)
             {
                 foreach (var c in car.trainset.cars)
-                    if (c != null && c.IsLoco) return c.ID;
+                    if (c != null && c.IsLoco) { loco = c; break; }
             }
 
-            return null;
+            if (loco == null) return null;
+
+            // Extract trailing digits: "DE2-034" → "034", "DH4-201" → "201"
+            var match = System.Text.RegularExpressions.Regex.Match(loco.ID ?? "", @"(\d+)$");
+            return match.Success ? match.Groups[1].Value : loco.ID;
         }
         catch (Exception ex)
         {

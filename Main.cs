@@ -19,6 +19,11 @@ public class Main
 		_hostObject = new GameObject("GRDNConnect_Host");
 		Object.DontDestroyOnLoad((Object)(object)_hostObject);
 		_hostObject.AddComponent<GRDNConnectBehaviour>();
+
+		// Hotbox / defect monitor — only active when BotPushUrl is configured
+		if (!string.IsNullOrEmpty(Settings.BotPushUrl))
+			_hostObject.AddComponent<DefectMonitor>();
+
 		ModEntry.Logger.Log($"[GRDNConnect] Loaded. HTTP server starting on port {Settings.Port}.");
 		return true;
 	}
