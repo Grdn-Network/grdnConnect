@@ -13,10 +13,8 @@ public class Settings : UnityModManager.ModSettings, IDrawable
 
     // ── Radio / Discord VC integration ────────────────────────────────────────
     // Requires CommsRadioAPI mod to be installed for the radio UI to appear.
-    // Fill these in via the UMM settings panel (Mods → GRDNConnect).
-
-    [Draw("Your Discord User ID (right-click your name → Copy User ID)")]
-    public string DiscordUserId = "";
+    // The bot matches players to Discord automatically via their in-game train
+    // number — no per-player Discord ID needed. Set BotPushUrl/BotSecret once.
 
     [Draw("Bot Push URL (e.g. http://your-vps:3000 or https://your.cloudflare.tunnel)")]
     public string BotPushUrl = "";

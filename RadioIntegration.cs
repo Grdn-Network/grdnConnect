@@ -15,7 +15,10 @@
 //
 // ON CHANNEL CHANGE → POST {BotPushUrl}/radio-change
 //   Header: x-secret: {BotSecret}
-//   Body:   { "discordUserId": "...", "vcId": "..." }
+//   Body:   { "trainNumber": "DE2-034", "vcId": "..." }
+//
+// The bot looks up the Discord user from the train number using its own crew
+// registrations — players don't need to configure a Discord ID here.
 
 using System;
 using System.Collections;
@@ -122,17 +125,25 @@ public static class RadioIntegration
     private static IEnumerator PushRadioChange(string vcId)
     {
         string pushUrl = (Main.Settings.BotPushUrl?.TrimEnd('/') ?? "");
-        string userId  = Main.Settings.DiscordUserId ?? "";
-        string secret  = Main.Settings.BotSecret     ?? "";
+        string secret  = Main.Settings.BotSecret ?? "";
 
-        if (string.IsNullOrEmpty(pushUrl) || string.IsNullOrEmpty(userId))
+        if (string.IsNullOrEmpty(pushUrl))
         {
-            Main.ModEntry.Logger.Warning("[GRDNConnect] Radio push skipped — BotPushUrl or DiscordUserId not set.");
+            Main.ModEntry.Logger.Warning("[GRDNConnect] Radio push skipped — BotPushUrl not set.");
+            yield break;
+        }
+
+        // Identify the player by their current loco ID (e.g. "DE2-034").
+        // The bot matches this to a Discord user via its /setcrew registrations.
+        string trainNumber = GetPlayerTrainNumber();
+        if (string.IsNullOrEmpty(trainNumber))
+        {
+            Main.ModEntry.Logger.Warning("[GRDNConnect] Radio push skipped — player not in a loco.");
             yield break;
         }
 
         string url  = pushUrl + "/radio-change";
-        string body = $"{{\"discordUserId\":\"{Esc(userId)}\",\"vcId\":\"{Esc(vcId)}\"}}";
+        string body = $"{{\"trainNumber\":\"{Esc(trainNumber)}\",\"vcId\":\"{Esc(vcId)}\"}}";
         byte[] raw  = Encoding.UTF8.GetBytes(body);
 
         using (var req = new UnityWebRequest(url, "POST"))
@@ -149,6 +160,40 @@ public static class RadioIntegration
                 Main.ModEntry.Logger.Log($"[GRDNConnect] Radio push OK → vcId={vcId}");
             else
                 Main.ModEntry.Logger.Warning($"[GRDNConnect] Radio push failed ({req.responseCode}): {req.error}");
+        }
+    }
+
+    // ── Player loco detection ─────────────────────────────────────────────────
+
+    /// <summary>
+    /// Returns the ID of the loco the local player is currently in (e.g. "DE2-034").
+    /// Returns null if the player is not inside a locomotive.
+    /// </summary>
+    private static string GetPlayerTrainNumber()
+    {
+        try
+        {
+            // PlayerManager.Car is the TrainCar the local player is sitting in.
+            // It is null when outside any car.
+            var car = PlayerManager.Car;
+            if (car == null) return null;
+
+            // Walk up to the loco: if the player is in a wagon, find the loco
+            // at the front of the trainset.
+            if (car.IsLoco) return car.ID;
+
+            if (car.trainset?.cars != null)
+            {
+                foreach (var c in car.trainset.cars)
+                    if (c != null && c.IsLoco) return c.ID;
+            }
+
+            return null;
+        }
+        catch (Exception ex)
+        {
+            Main.ModEntry.Logger.Warning("[GRDNConnect] GetPlayerTrainNumber: " + ex.Message);
+            return null;
         }
     }
 
