@@ -1,5 +1,9 @@
 // RadioIntegration.cs
 // Soft dependency on CommsRadioAPI (https://github.com/fauxnik/dv-comms-radio-api).
+// Wrapped in #if COMMS_RADIO_API so the project compiles even when CommsRadioAPI.dll
+// is absent from lib/. The symbol is defined automatically by GRDNConnect.csproj
+// when the DLL is detected. Without it, TryInit() is a no-op stub.
+#if COMMS_RADIO_API
 //
 // HOW THE SOFT DEP WORKS
 // ──────────────────────
@@ -339,3 +343,13 @@ public class GRDNRadioMode : AStateBehaviour
         display.SetContent("GRDN RADIO", body, Color.white);
     }
 }
+
+#else
+// ── Stub — compiled when CommsRadioAPI.dll is absent from lib/ ────────────────
+// Provides a no-op TryInit() so GRDNConnectBehaviour compiles without errors.
+public static class RadioIntegration
+{
+    public static void TryInit(UnityEngine.MonoBehaviour host) { }
+    internal static string GetPlayerTrainNumber() => null;
+}
+#endif

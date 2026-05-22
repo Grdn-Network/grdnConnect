@@ -28,11 +28,6 @@
       <HintPath>lib\Assembly-CSharp.dll</HintPath>
       <Private>False</Private>
     </Reference>
-    <!-- CommsRadioAPI — compile-time only (soft dep; TryInit bails if not installed at runtime) -->
-    <Reference Include="CommsRadioAPI">
-      <HintPath>lib\CommsRadioAPI.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
     <Reference Include="DV.ThingTypes">
       <HintPath>lib\DV.ThingTypes.dll</HintPath>
       <Private>False</Private>
@@ -59,6 +54,19 @@
     </Reference>
     <Reference Include="UnityEngine.IMGUIModule">
       <HintPath>lib\UnityEngine.IMGUIModule.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+  </ItemGroup>
+
+  <!-- CommsRadioAPI — optional compile dep. Define COMMS_RADIO_API and add the
+       reference only when the DLL is present in lib/. Without it the radio-mode
+       classes compile away to empty stubs and the build still succeeds. -->
+  <PropertyGroup Condition="Exists('$(MSBuildProjectDirectory)\lib\CommsRadioAPI.dll')">
+    <DefineConstants>$(DefineConstants);COMMS_RADIO_API</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup Condition="Exists('$(MSBuildProjectDirectory)\lib\CommsRadioAPI.dll')">
+    <Reference Include="CommsRadioAPI">
+      <HintPath>lib\CommsRadioAPI.dll</HintPath>
       <Private>False</Private>
     </Reference>
   </ItemGroup>

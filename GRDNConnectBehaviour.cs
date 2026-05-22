@@ -30,8 +30,11 @@ public class GRDNConnectBehaviour : MonoBehaviour
 			Main.ModEntry.Logger.Error("[GRDNConnect] Failed to start: " + ex.Message);
 		}
 
-		// Optional CommsRadioAPI integration — silently skipped if mod is absent.
+		// Optional CommsRadioAPI integration — compiled and run only when
+		// CommsRadioAPI.dll is present in lib/ at build time.
+#if COMMS_RADIO_API
 		RadioIntegration.TryInit(this);
+#endif
 	}
 
 	/// <summary>

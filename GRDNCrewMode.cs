@@ -1,6 +1,8 @@
 // GRDNCrewMode.cs
 // Second CommsRadioAPI mode — lets a player re-assign themselves to a different
 // loco from inside the game, without touching Discord.
+// Compiled only when CommsRadioAPI.dll is present in lib/ (COMMS_RADIO_API defined).
+#if COMMS_RADIO_API
 //
 // HOW IT WORKS
 // ─────────────
@@ -212,3 +214,4 @@ public class GRDNCrewMode : AStateBehaviour
     private static string Esc(string s) =>
         s?.Replace("\\", "\\\\").Replace("\"", "\\\"") ?? "";
 }
+#endif
