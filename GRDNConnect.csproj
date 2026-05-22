@@ -28,6 +28,11 @@
       <HintPath>lib\Assembly-CSharp.dll</HintPath>
       <Private>False</Private>
     </Reference>
+    <!-- CommsRadioAPI — compile-time only (soft dep; TryInit bails if not installed at runtime) -->
+    <Reference Include="CommsRadioAPI">
+      <HintPath>lib\CommsRadioAPI.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
     <Reference Include="DV.ThingTypes">
       <HintPath>lib\DV.ThingTypes.dll</HintPath>
       <Private>False</Private>
