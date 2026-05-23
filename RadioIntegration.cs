@@ -303,14 +303,15 @@ public class GRDNRadioState : AStateBehaviour
         bool sent  = false)
         : base(new CommsRadioState(
             "GRDN RADIO",
-            MakeContent(channels, index, sent),
-            // Button label: blank while sent/no channels, otherwise "SWITCH"
-            (!sent && channels.Count > 0) ? "SWITCH" : "",
+            // Always read the live list so opening the menu shows current channels,
+            // even if they were pushed after game load.
+            MakeContent(RadioIntegration.ActiveChannels, index, sent),
+            (!sent && RadioIntegration.ActiveChannels.Count > 0) ? "SWITCH" : "",
             LCDArrowState.Off,
             LEDState.Off,
-            (!sent && channels.Count > 0) ? ButtonBehaviourType.Override : ButtonBehaviourType.Regular))
+            (!sent && RadioIntegration.ActiveChannels.Count > 0) ? ButtonBehaviourType.Override : ButtonBehaviourType.Regular))
     {
-        _channels   = channels;
+        _channels   = RadioIntegration.ActiveChannels;
         _onSelected = onSelected;
         _index      = index;
         _sent       = sent;
@@ -318,9 +319,20 @@ public class GRDNRadioState : AStateBehaviour
 
     private static string MakeContent(List<(string name, string vcId)> channels, int idx, bool sent)
     {
-        if (sent)              return "Switching...";
+        if (sent)                return "Switching...";
         if (channels.Count == 0) return "No channels";
         return $"{idx + 1}/{channels.Count}  {channels[idx].name}";
+    }
+
+    // ── Real-time refresh — detects when the bot pushes channels mid-session ──
+    public override AStateBehaviour OnUpdate(CommsRadioUtility utility)
+    {
+        if (_sent) return this;
+        var live = RadioIntegration.ActiveChannels;
+        // Transition only when count changes to avoid per-frame allocation
+        if (live.Count == _channels.Count) return this;
+        int safeIndex = live.Count > 0 ? Math.Min(_index, live.Count - 1) : 0;
+        return new GRDNRadioState(live, _onSelected, safeIndex);
     }
 
     public override AStateBehaviour OnAction(CommsRadioUtility utility, InputAction action)
@@ -331,21 +343,21 @@ public class GRDNRadioState : AStateBehaviour
         switch (action)
         {
             case InputAction.Up:
-                if (ch.Count == 0) return this;
+                if (ch.Count == 0) return new GRDNRadioState(ch, _onSelected, 0);
                 return new GRDNRadioState(ch, _onSelected, (_index - 1 + ch.Count) % ch.Count);
 
             case InputAction.Down:
-                if (ch.Count == 0) return this;
+                if (ch.Count == 0) return new GRDNRadioState(ch, _onSelected, 0);
                 return new GRDNRadioState(ch, _onSelected, (_index + 1) % ch.Count);
 
             case InputAction.Activate:
-                if (ch.Count == 0) return this;
+                if (ch.Count == 0) return new GRDNRadioState(ch, _onSelected, 0);
                 int idx = Math.Min(_index, ch.Count - 1);
                 _onSelected?.Invoke(ch[idx].vcId);
                 return new GRDNRadioState(ch, _onSelected, idx, sent: true);
 
             default:
-                return this;
+                return new GRDNRadioState(ch, _onSelected, _index, _sent);
         }
     }
 }

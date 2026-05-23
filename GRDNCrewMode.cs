@@ -59,7 +59,7 @@ public class GRDNCrewState : AStateBehaviour
 
     // ── Entry point — called when this mode state is first constructed ────────
     public GRDNCrewState(MonoBehaviour host)
-        : this(host, ScanTarget(), sent: false)
+        : this(host, ScanTarget(null), sent: false)
     { }
 
     // ── Internal constructor ──────────────────────────────────────────────────
@@ -69,7 +69,7 @@ public class GRDNCrewState : AStateBehaviour
             MakeContent(target.num, target.type, sent),
             (!sent && target.num != null) ? "ASSIGN" : "",
             LCDArrowState.Off,
-            LEDState.Off,
+            sent ? LEDState.Off : (target.num != null ? LEDState.On : LEDState.Off),
             (!sent && target.num != null) ? ButtonBehaviourType.Override : ButtonBehaviourType.Regular))
     {
         _host        = host;
@@ -78,23 +78,42 @@ public class GRDNCrewState : AStateBehaviour
         _sent        = sent;
     }
 
+    // ── Real-time targeting — updates LCD as the player aims ──────────────────
+    // Called every frame by CommsRadioAPI. Returns a new state if the target
+    // under the crosshair changed; returns this if nothing changed.
+    public override AStateBehaviour OnUpdate(CommsRadioUtility utility)
+    {
+        // While showing "Assigning..." don't rescan — wait for Activate/Up/Down
+        if (_sent) return this;
+
+        var target = ScanTarget(utility.SignalOrigin);
+
+        // Only transition if something actually changed — avoids per-frame allocation
+        if (target.num == _trainNumber && target.type == _locoType)
+            return this;
+
+        return new GRDNCrewState(_host, target, sent: false);
+    }
+
     // ── State machine ─────────────────────────────────────────────────────────
     public override AStateBehaviour OnAction(CommsRadioUtility utility, InputAction action)
     {
         switch (action)
         {
-            // Up / Down — rescan targeting in case the player has re-aimed at a different loco.
-            // Also clears the sent state so the player can assign again after moving.
+            // Up / Down — explicit rescan (also clears sent state)
             case InputAction.Up:
             case InputAction.Down:
-                return new GRDNCrewState(_host, ScanTarget(), sent: false);
+                return new GRDNCrewState(_host, ScanTarget(utility.SignalOrigin), sent: false);
 
             case InputAction.Activate:
-                if (_sent) return this;  // ignore; prevent double-send while request is in flight
+                // Activate must always result in a state transition (API requirement).
+                // When in "Assigning..." state, treat as rescan so the player can continue.
+                if (_sent)
+                    return new GRDNCrewState(_host, ScanTarget(utility.SignalOrigin), sent: false);
 
-                // Nothing targeted — do a fresh scan rather than assigning nothing
+                // Nothing targeted — fresh scan
                 if (_trainNumber == null)
-                    return new GRDNCrewState(_host, ScanTarget(), sent: false);
+                    return new GRDNCrewState(_host, ScanTarget(utility.SignalOrigin), sent: false);
 
                 // fromTrain: where the bot will look for the existing registration.
                 // First use this session → assume the targeted loco is already registered
@@ -106,23 +125,33 @@ public class GRDNCrewState : AStateBehaviour
                 return new GRDNCrewState(_host, (_trainNumber, _locoType), sent: true);
 
             default:
-                return this;
+                return new GRDNCrewState(_host, (_trainNumber, _locoType), _sent);
         }
     }
 
     // ── Raycast targeting ─────────────────────────────────────────────────────
-    // Fires a ray from the player's camera forward.
+    // Fires a ray from the signal origin (when available) or the player camera.
     // Returns (trainNumber, locoType) if a loco is centred; (null, null) otherwise.
     // Tenders and cargo cars return (null, null) — IsLoco filters them out.
-    private static (string num, string type) ScanTarget()
+    private static (string num, string type) ScanTarget(Transform signalOrigin)
     {
         try
         {
-            var cam = Camera.main;
-            if (cam == null) return (null, null);
+            Vector3 pos, dir;
+            if (signalOrigin != null)
+            {
+                pos = signalOrigin.position;
+                dir = signalOrigin.forward;
+            }
+            else
+            {
+                var cam = Camera.main;
+                if (cam == null) return (null, null);
+                pos = cam.transform.position;
+                dir = cam.transform.forward;
+            }
 
-            if (!Physics.Raycast(cam.transform.position, cam.transform.forward,
-                    out RaycastHit hit, RAYCAST_RANGE))
+            if (!Physics.Raycast(pos, dir, out RaycastHit hit, RAYCAST_RANGE))
                 return (null, null);
 
             // The hit collider may be on a child transform — walk up to find the TrainCar root
