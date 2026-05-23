@@ -68,7 +68,8 @@ public static class RadioIntegration
         _host = coroutineHost;
 
         // 1. Is CommsRadioAPI installed and active at runtime?
-        var apiMod = UnityModManagerNet.UnityModManager.FindMod("dv-comms-radio-api");
+        // UMM mod ID is "CommsRadioAPI" (from its Info.json) — not "dv-comms-radio-api".
+        var apiMod = UnityModManagerNet.UnityModManager.FindMod("CommsRadioAPI");
         if (apiMod == null || !apiMod.Active)
         {
             Main.ModEntry.Logger.Log("[GRDNConnect] CommsRadioAPI not installed — radio integration disabled.");
