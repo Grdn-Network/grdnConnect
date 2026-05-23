@@ -8,7 +8,11 @@ using UnityEngine;
 
 public static class JobCompletionHelper
 {
-	public static bool TryCompleteJob(string jobId)
+	/// <summary>
+	/// Attempts to complete a job by ID.
+	/// Returns (true, null) on success, or (false, reason) on failure.
+	/// </summary>
+	public static (bool ok, string error) TryCompleteJob(string jobId)
 	{
 		try
 		{
@@ -16,8 +20,9 @@ public static class JobCompletionHelper
 			if ((UnityEngine.Object)(object)instance == (UnityEngine.Object)null)
 			{
 				Debug.LogError((object)"[GRDNConnect] JobsManager.Instance is null.");
-				return false;
+				return (false, "JobsManager is not available — is the game in a loaded save?");
 			}
+
 			foreach (Job currentJob in instance.currentJobs)
 			{
 				if (currentJob.ID != jobId)
@@ -29,7 +34,7 @@ public static class JobCompletionHelper
 				if ((int)val == 2)
 				{
 					Pay(wage, jobId);
-					return true;
+					return (true, null);
 				}
 
 				// Relaxed completion: re-attempt after moving cars to destination tracks.
@@ -40,20 +45,25 @@ public static class JobCompletionHelper
 					if (TryForceCompleteRelaxed(instance, currentJob))
 					{
 						Pay(wage, jobId);
-						return true;
+						return (true, null);
 					}
+					return (false, "Cars are not yet at the destination track (relaxed completion also failed)");
 				}
 
-				Debug.LogWarning((object)$"[GRDNConnect] TryToCompleteAJob returned {val} for {jobId}. Cars may not be at destination.");
-				return false;
+				Debug.LogWarning((object)$"[GRDNConnect] TryToCompleteAJob returned {val} for {jobId}.");
+				string reason = (int)val == 1
+					? "Cars are not yet spotted to the required destination track"
+					: $"Job validator returned state '{val}' — cars may not be in the correct position";
+				return (false, reason);
 			}
+
 			Debug.LogWarning((object)("[GRDNConnect] Job not found: " + jobId));
-			return false;
+			return (false, "Job not found — it may already be completed, expired, or the ID is wrong");
 		}
 		catch (Exception ex)
 		{
 			Debug.LogError((object)("[GRDNConnect] TryCompleteJob threw: " + ex.Message));
-			return false;
+			return (false, ex.Message);
 		}
 	}
 

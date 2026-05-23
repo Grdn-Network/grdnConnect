@@ -424,8 +424,9 @@ public class GRDNConnectBehaviour : MonoBehaviour
 			SendJson(res, 400, "{\"ok\":false,\"error\":\"Missing jobId\"}");
 			return;
 		}
-		bool flag = JobCompletionHelper.TryCompleteJob(text);
-		SendJson(res, flag ? 200 : 404, "{\"ok\":" + (flag ? "true" : "false") + ",\"jobId\":\"" + Escape(text) + "\"}");
+		var (ok, error) = JobCompletionHelper.TryCompleteJob(text);
+		string errorField = !string.IsNullOrEmpty(error) ? $",\"error\":\"{Escape(error)}\"" : "";
+		SendJson(res, ok ? 200 : 404, $"{{\"ok\":{(ok ? "true" : "false")},\"jobId\":\"{Escape(text)}\"{errorField}}}");
 	}
 
 	// ── POST /session-config ──────────────────────────────────────────────────
@@ -720,9 +721,10 @@ public class GRDNConnectBehaviour : MonoBehaviour
 	}
 
 	/// <summary>
-	/// Walks the job's task tree and returns the FullDisplayID of the first
-	/// destinationTrack found (e.g. "HB-F-3"). Works for Transport tasks;
-	/// returns null for job types without a track-level destination.
+	/// Walks the job's task tree and returns the relevant destination track ID.
+	/// For ShuntingLoad/ShuntingUnload: returns the LAST destination track found
+	/// (where cars end up after loading/unloading, not the facility spot).
+	/// For all other types: returns the FIRST destination track found.
 	/// </summary>
 	private string GetDestinationTrack(Job job)
 	{
@@ -733,13 +735,21 @@ public class GRDNConnectBehaviour : MonoBehaviour
 			Type jobType = ((object)job).GetType();
 			object taskList = jobType.GetField("tasks", bf)?.GetValue(job)
 			               ?? jobType.GetProperty("tasks", bf)?.GetValue(job);
-			if (taskList is IEnumerable tasks)
-				return FindTrackInTasks(tasks, bf);
+			if (!(taskList is IEnumerable tasks)) return null;
+
+			// SL/SU: last task destination is where cars end up after the operation,
+			// not the intermediate loading/unloading facility track.
+			string jobTypeName = ((object)job.jobType).ToString();
+			bool isShunting = jobTypeName == "ShuntingLoad" || jobTypeName == "ShuntingUnload";
+			return isShunting
+				? FindLastTrackInTasks(tasks, bf)
+				: FindTrackInTasks(tasks, bf);
 		}
 		catch { }
 		return null;
 	}
 
+	// Returns the FIRST destinationTrack encountered (depth-first).
 	private string FindTrackInTasks(IEnumerable tasks, BindingFlags bf)
 	{
 		foreach (var task in tasks)
@@ -752,13 +762,8 @@ public class GRDNConnectBehaviour : MonoBehaviour
 			               ?? t.GetProperty("destinationTrack", bf)?.GetValue(task);
 			if (trackObj != null)
 			{
-				object trackId = trackObj.GetType().GetProperty("ID", bf)?.GetValue(trackObj)
-				              ?? trackObj.GetType().GetField("<ID>k__BackingField", bf)?.GetValue(trackObj);
-				if (trackId != null)
-				{
-					string full = trackId.GetType().GetProperty("FullDisplayID", bf)?.GetValue(trackId)?.ToString();
-					if (!string.IsNullOrEmpty(full)) return full;
-				}
+				string full = ExtractFullDisplayID(trackObj, bf);
+				if (!string.IsNullOrEmpty(full)) return full;
 			}
 
 			// Recurse into SequentialTasks.tasks / ParallelTasks.tasks
@@ -771,6 +776,42 @@ public class GRDNConnectBehaviour : MonoBehaviour
 			}
 		}
 		return null;
+	}
+
+	// Returns the LAST destinationTrack encountered (depth-first, keeps going).
+	private string FindLastTrackInTasks(IEnumerable tasks, BindingFlags bf)
+	{
+		string last = null;
+		foreach (var task in tasks)
+		{
+			if (task == null) continue;
+			Type t = task.GetType();
+
+			object trackObj = t.GetField("destinationTrack", bf)?.GetValue(task)
+			               ?? t.GetProperty("destinationTrack", bf)?.GetValue(task);
+			if (trackObj != null)
+			{
+				string full = ExtractFullDisplayID(trackObj, bf);
+				if (!string.IsNullOrEmpty(full)) last = full;
+			}
+
+			object sub = t.GetField("tasks", bf)?.GetValue(task)
+			          ?? t.GetProperty("tasks", bf)?.GetValue(task);
+			if (sub is IEnumerable subTasks)
+			{
+				string found = FindLastTrackInTasks(subTasks, bf);
+				if (found != null) last = found;
+			}
+		}
+		return last;
+	}
+
+	// Extracts Track.ID.FullDisplayID from a Track object via reflection.
+	private string ExtractFullDisplayID(object trackObj, BindingFlags bf)
+	{
+		object trackId = trackObj.GetType().GetProperty("ID", bf)?.GetValue(trackObj)
+		              ?? trackObj.GetType().GetField("<ID>k__BackingField", bf)?.GetValue(trackObj);
+		return trackId?.GetType().GetProperty("FullDisplayID", bf)?.GetValue(trackId)?.ToString();
 	}
 
 	/// <summary>
