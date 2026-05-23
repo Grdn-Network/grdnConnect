@@ -34,28 +34,30 @@ public static class RadioIntegration
             return;
         }
 
-        // 2. Parse channels from settings
+        // 2. Parse channels for GRDN Radio (empty = radio mode skipped, crew mode still loads)
         var channels = ParseChannels(Main.Settings.RadioChannelsJson);
-        if (channels.Count == 0)
-        {
-            Main.ModEntry.Logger.Log("[GRDNConnect] No radio channels configured — radio integration disabled.");
-            return;
-        }
 
         // 3. Register modes when the CommsRadio controller is ready
         ControllerAPI.Ready += () =>
         {
             try
             {
-                // GRDN Radio — cycle Discord voice channels
-                CommsRadioMode.Create(
-                    new GRDNRadioState(channels, OnChannelSelected),
-                    Color.white,
-                    null
-                );
-                Main.ModEntry.Logger.Log($"[GRDNConnect] Radio mode registered — {channels.Count} channel(s).");
+                // GRDN Radio — cycle Discord voice channels (only when channels are configured)
+                if (channels.Count > 0)
+                {
+                    CommsRadioMode.Create(
+                        new GRDNRadioState(channels, OnChannelSelected),
+                        Color.white,
+                        null
+                    );
+                    Main.ModEntry.Logger.Log($"[GRDNConnect] Radio mode registered — {channels.Count} channel(s).");
+                }
+                else
+                {
+                    Main.ModEntry.Logger.Log("[GRDNConnect] No radio channels configured — GRDN RADIO skipped.");
+                }
 
-                // GRDN Crew — in-game loco assignment
+                // GRDN Crew — in-game loco assignment (always registered, no channels needed)
                 CommsRadioMode.Create(
                     new GRDNCrewState(_host),
                     Color.yellow,
