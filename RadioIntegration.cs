@@ -309,77 +309,117 @@ public static class RadioIntegration
 }
 
 // ── GRDN Radio state ──────────────────────────────────────────────────────────
-// One state = one LCD screen. OnAction returns a new state with updated index.
+//
+// TWO-STAGE DESIGN
+// ─────────────────
+// IDLE    (default) — shown when scrolling through radio modes.
+//         LCD is blank. Up/Down return a new idle state (no channel scroll),
+//         so the player can navigate past GRDN RADIO to other modes normally.
+//         Button "BROWSE" (Override) → enters Browse on Activate.
+//
+// BROWSE  — entered by pressing BROWSE. Shows live channel list with Up/Down
+//         arrows. Up/Down scrolls channels. Activate sends the push → Sent.
+//
+// SENT    — LCD shows "Switching..." (Regular). Any button press → Idle.
+//
+// WHY: if Up/Down scrolled channels in Idle, pressing Up/Down while passing
+// through GRDN RADIO in the mode list would scroll channels instead of
+// advancing to the next mode, locking the player.
 
 public class GRDNRadioState : AStateBehaviour
 {
     private readonly List<(string name, string vcId)> _channels;
     private readonly Action<string> _onSelected;
     private readonly int  _index;
-    private readonly bool _sent;   // true while showing "Switching..." confirmation
+    private readonly bool _sent;
+    private readonly bool _browsing;  // true = channel-select stage
 
     public GRDNRadioState(
         List<(string name, string vcId)> channels,
         Action<string> onSelected,
-        int  index = 0,
-        bool sent  = false)
+        int  index    = 0,
+        bool sent     = false,
+        bool browsing = false)
         : base(new CommsRadioState(
             "GRDN RADIO",
-            // Always read the live list so opening the menu shows current channels,
-            // even if they were pushed after game load.
-            MakeContent(RadioIntegration.ActiveChannels, index, sent),
-            (!sent && RadioIntegration.ActiveChannels.Count > 0) ? "SWITCH" : "",
-            LCDArrowState.Off,
+            MakeContent(RadioIntegration.ActiveChannels, index, sent, browsing),
+            GetLabel(sent, browsing, RadioIntegration.ActiveChannels.Count),
+            browsing ? LCDArrowState.UpDown : LCDArrowState.Off,
             LEDState.Off,
-            (!sent && RadioIntegration.ActiveChannels.Count > 0) ? ButtonBehaviourType.Override : ButtonBehaviourType.Regular))
+            (browsing && !sent) ? ButtonBehaviourType.Override : ButtonBehaviourType.Regular))
     {
         _channels   = RadioIntegration.ActiveChannels;
         _onSelected = onSelected;
         _index      = index;
         _sent       = sent;
+        _browsing   = browsing;
     }
 
-    private static string MakeContent(List<(string name, string vcId)> channels, int idx, bool sent)
+    private static string GetLabel(bool sent, bool browsing, int count)
     {
-        if (sent)                return "Switching...";
+        if (sent)      return "";
+        if (!browsing) return count > 0 ? "BROWSE" : "";
+        return "SWITCH";
+    }
+
+    private static string MakeContent(
+        List<(string name, string vcId)> channels, int idx, bool sent, bool browsing)
+    {
+        if (sent)       return "Switching...";
+        if (!browsing)  return "";                          // idle — header "GRDN RADIO" is enough
         if (channels.Count == 0) return "No channels";
         return $"{idx + 1}/{channels.Count}  {channels[idx].name}";
     }
 
-    // ── Real-time refresh — detects when the bot pushes channels mid-session ──
+    // ── Real-time refresh — only runs in idle to avoid per-frame alloc ────────
     public override AStateBehaviour OnUpdate(CommsRadioUtility utility)
     {
-        if (_sent) return this;
+        if (_sent || _browsing) return this;
         var live = RadioIntegration.ActiveChannels;
-        // Transition only when count changes to avoid per-frame allocation
         if (live.Count == _channels.Count) return this;
-        int safeIndex = live.Count > 0 ? Math.Min(_index, live.Count - 1) : 0;
-        return new GRDNRadioState(live, _onSelected, safeIndex);
+        return new GRDNRadioState(live, _onSelected, 0);
     }
 
     public override AStateBehaviour OnAction(CommsRadioUtility utility, InputAction action)
     {
-        // Always read the live channel list — picks up updates pushed by the bot mid-session
         var ch = RadioIntegration.ActiveChannels;
 
         switch (action)
         {
             case InputAction.Up:
-                if (ch.Count == 0) return new GRDNRadioState(ch, _onSelected, 0);
-                return new GRDNRadioState(ch, _onSelected, (_index - 1 + ch.Count) % ch.Count);
-
             case InputAction.Down:
-                if (ch.Count == 0) return new GRDNRadioState(ch, _onSelected, 0);
-                return new GRDNRadioState(ch, _onSelected, (_index + 1) % ch.Count);
+                // Sent or idle: Up/Down returns to idle (no channel scroll).
+                // In idle this means Up/Down does nothing visible — the player
+                // can use them to navigate to the next radio mode.
+                if (_sent || !_browsing)
+                    return new GRDNRadioState(ch, _onSelected, _index, false, false);
+
+                // Browsing: scroll channel list
+                if (ch.Count == 0)
+                    return new GRDNRadioState(ch, _onSelected, 0, false, true);
+                int next = action == InputAction.Up
+                    ? (_index - 1 + ch.Count) % ch.Count
+                    : (_index + 1) % ch.Count;
+                return new GRDNRadioState(ch, _onSelected, next, false, true);
 
             case InputAction.Activate:
-                if (ch.Count == 0) return new GRDNRadioState(ch, _onSelected, 0);
+                // Sent → back to idle
+                if (_sent)
+                    return new GRDNRadioState(ch, _onSelected, _index, false, false);
+
+                // Idle → browse (read live channel list at this moment)
+                if (!_browsing)
+                    return new GRDNRadioState(ch, _onSelected, _index, false, true);
+
+                // Browsing → switch channel
+                if (ch.Count == 0)
+                    return new GRDNRadioState(ch, _onSelected, 0, false, true);
                 int idx = Math.Min(_index, ch.Count - 1);
                 _onSelected?.Invoke(ch[idx].vcId);
-                return new GRDNRadioState(ch, _onSelected, idx, sent: true);
+                return new GRDNRadioState(ch, _onSelected, idx, sent: true, browsing: false);
 
             default:
-                return new GRDNRadioState(ch, _onSelected, _index, _sent);
+                return new GRDNRadioState(ch, _onSelected, _index, _sent, _browsing);
         }
     }
 }
