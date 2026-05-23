@@ -13,6 +13,8 @@ using UnityEngine;
 public class GRDNConnectBehaviour : MonoBehaviour
 {
 	private HttpListener _listener;
+	private static GRDNConnectBehaviour _instance;
+	private static int _activePort = -1;   // port the listener is currently bound to
 
 	// ── Session config — pushed by the bot on /session start ─────────────────
 	// Cleared to null on destroy so a fresh session always picks up new values.
@@ -33,21 +35,14 @@ public class GRDNConnectBehaviour : MonoBehaviour
 	internal static string ActiveBotSecret =>
 		!string.IsNullOrEmpty(_sessionBotSecret) ? _sessionBotSecret : Main.Settings.BotSecret;
 
+	private void Awake()
+	{
+		_instance = this;
+	}
+
 	private void Start()
 	{
-		int port = Main.Settings.Port;
-		_listener = new HttpListener();
-		_listener.Prefixes.Add($"http://*:{port}/");
-		try
-		{
-			_listener.Start();
-			Main.ModEntry.Logger.Log($"[GRDNConnect] Listening on port {port}.");
-			((MonoBehaviour)this).StartCoroutine(ListenLoop());
-		}
-		catch (Exception ex)
-		{
-			Main.ModEntry.Logger.Error("[GRDNConnect] Failed to start: " + ex.Message);
-		}
+		StartListener(Main.Settings.Port);
 
 		// Optional CommsRadioAPI integration — compiled and run only when
 		// CommsRadioAPI.dll is present in lib/ at build time.
@@ -57,6 +52,69 @@ public class GRDNConnectBehaviour : MonoBehaviour
 		// Works for clients joining after /session start — they never receive
 		// the bot's push, but they do have BotPushUrl in their UMM settings.
 		RadioIntegration.StartChannelPolling(this);
+#endif
+	}
+
+	/// <summary>
+	/// Stops the HTTP listener immediately (synchronous). Safe to call multiple times.
+	/// Called from Main.Unload() BEFORE Object.Destroy() so the port is free when
+	/// Load() runs in the same frame and creates a fresh instance.
+	/// </summary>
+	internal void StopListener()
+	{
+		try
+		{
+			if (_listener != null)
+			{
+				if (_listener.IsListening) _listener.Stop();
+				_listener.Close();
+				_listener = null;
+				_activePort = -1;
+			}
+		}
+		catch { }
+	}
+
+	/// <summary>
+	/// Starts (or restarts) the HTTP listener on the given port.
+	/// No-op if the listener is already running on that port.
+	/// </summary>
+	private void StartListener(int port)
+	{
+		if (port == _activePort && _listener?.IsListening == true) return;
+
+		StopListener();
+
+		_listener = new HttpListener();
+		_listener.Prefixes.Add($"http://*:{port}/");
+		try
+		{
+			_listener.Start();
+			_activePort = port;
+			Main.ModEntry.Logger.Log($"[GRDNConnect] Listening on port {port}.");
+			((MonoBehaviour)this).StartCoroutine(ListenLoop());
+		}
+		catch (Exception ex)
+		{
+			_activePort = -1;
+			Main.ModEntry.Logger.Error($"[GRDNConnect] Failed to start on port {port}: {ex.Message}");
+		}
+	}
+
+	/// <summary>
+	/// Called from Settings.OnChange() — applies port change and live radio channel list.
+	/// Restarts the listener only if the port actually changed and is valid.
+	/// </summary>
+	internal static void ApplySettingsChange()
+	{
+		if (_instance == null) return;
+
+		int newPort = Main.Settings.Port;
+		if (newPort >= 1024 && newPort <= 65535 && newPort != _activePort)
+			_instance.StartListener(newPort);
+
+#if COMMS_RADIO_API
+		RadioIntegration.UpdateChannelsFromJson(Main.Settings.RadioChannelsJson);
 #endif
 	}
 
@@ -135,11 +193,8 @@ public class GRDNConnectBehaviour : MonoBehaviour
 
 	private void OnDestroy()
 	{
-		if (_listener != null && _listener.IsListening)
-		{
-			_listener.Stop();
-			_listener.Close();
-		}
+		if (_instance == this) _instance = null;
+		StopListener();
 	}
 
 	private IEnumerator ListenLoop()

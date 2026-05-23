@@ -38,5 +38,9 @@ public class Settings : UnityModManager.ModSettings, IDrawable
 
     public void OnChange()
     {
+        // Applies live — no game restart required.
+        // Port: restarts HTTP server on new port (only if valid and actually changed).
+        // RadioChannelsJson: pushes updated channel list into the live radio integration.
+        GRDNConnectBehaviour.ApplySettingsChange();
     }
 }

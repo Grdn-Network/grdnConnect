@@ -42,7 +42,12 @@ public class Main
 	{
 		if ((Object)(object)_hostObject != (Object)null)
 		{
+			// Stop the HTTP server NOW — Object.Destroy() is deferred to end-of-frame.
+			// Without this, if Load() is called in the same frame (e.g. UMM mod reload),
+			// the old listener is still bound to the port when the new one tries to start.
+			_hostObject.GetComponent<GRDNConnectBehaviour>()?.StopListener();
 			Object.Destroy((Object)(object)_hostObject);
+			_hostObject = null;
 		}
 		ModEntry.Logger.Log("[GRDNConnect] Unloaded.");
 		return true;
