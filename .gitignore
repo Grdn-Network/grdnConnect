@@ -3,3 +3,7 @@ obj/
 *.user
 .vs/
 *.bat
+# Optional build-time deps — add locally to enable radio mode compilation.
+# Do NOT commit these: their presence/absence controls #if COMMS_RADIO_API.
+lib/CommsRadioAPI.dll
+lib/0Harmony.dll
