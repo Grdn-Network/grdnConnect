@@ -1,14 +1,13 @@
 // GRDNCrewMode.cs
-// Second CommsRadioAPI mode — lets a player re-assign themselves to a different
+// GRDN Crew radio mode — lets a player re-assign themselves to a different
 // loco from inside the game, without touching Discord.
 // Compiled only when CommsRadioAPI.dll is present in lib/ (COMMS_RADIO_API defined).
-#if COMMS_RADIO_API
 //
 // HOW IT WORKS
 // ─────────────
-// When activated, scans for all locomotives in the world and presents them as
-// a scrollable list (Button A = previous, Button B = next).
-// Pressing the action confirms and tells the bot:
+// When the mode is opened, scans the world for all locomotives and presents
+// them as a scrollable list (Up = previous, Down = next).
+// Pressing Activate confirms and tells the bot:
 //   POST /update-crew { fromTrainNumber: "034", toTrainNumber: "201" }
 // The bot looks up whoever is registered to "034" and re-assigns them to "201".
 //
@@ -18,103 +17,92 @@
 // their initial Discord ↔ train link. After that, this mode handles all
 // mid-op loco changes automatically.
 //
-// SOFT DEPENDENCY: CommsRadioAPI
-// This file is only active when CommsRadioAPI is found.
-// Registered by RadioIntegration.TryInit().
+// API VERSION: CommsRadioAPI v1.0.3 (state-machine pattern)
+// Registered by RadioIntegration.TryInit() via ControllerAPI.Ready.
+#if COMMS_RADIO_API
 
 using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Text;
 using System.Text.RegularExpressions;
+using CommsRadioAPI;
+using DV;
 using UnityEngine;
 using UnityEngine.Networking;
 
 /// <summary>
-/// The GRDN Crew radio mode — scroll through active locos and claim one.
-/// Registered alongside GRDNRadioMode by RadioIntegration.TryInit().
+/// Immutable state object for the GRDN Crew radio mode.
+/// OnAction returns a new instance with updated index or busy flag.
 /// </summary>
-public class GRDNCrewMode : AStateBehaviour
+public class GRDNCrewState : AStateBehaviour
 {
-    // ── State ─────────────────────────────────────────────────────────────────
+    private readonly List<string> _locoIds;
+    private readonly int          _index;
+    private readonly MonoBehaviour _host;
 
-    private List<string> _locoIds = new List<string>(); // numeric train numbers
-    private int _index;
-    private readonly MonoBehaviour _host; // for coroutine hosting
+    // ── Entry point ───────────────────────────────────────────────────────────
 
-    // ── Construction ──────────────────────────────────────────────────────────
+    /// <summary>Called by RadioIntegration — scans world locos on first open.</summary>
+    public GRDNCrewState(MonoBehaviour host)
+        : this(host, ScanLocos(), 0, busy: false) { }
 
-    public GRDNCrewMode(MonoBehaviour host)
+    // ── Internal constructor ──────────────────────────────────────────────────
+
+    private GRDNCrewState(MonoBehaviour host, List<string> locos, int index, bool busy)
+        : base(new CommsRadioState(
+            "GRDN CREW",
+            MakeContent(locos, index, busy),
+            busy ? "" : (locos.Count > 0 ? "ASSIGN" : ""),
+            LCDArrowState.Off,
+            LEDState.Off,
+            busy || locos.Count == 0 ? ButtonBehaviourType.Ignore : ButtonBehaviourType.Override))
     {
-        _host = host;
+        _host    = host;
+        _locoIds = locos;
+        _index   = index;
     }
 
-    // ── AStateBehaviour lifecycle ─────────────────────────────────────────────
+    // ── State machine ─────────────────────────────────────────────────────────
 
-    public override void Enable()
+    public override AStateBehaviour OnAction(CommsRadioUtility utility, InputAction action)
     {
-        RefreshLocoList();
-        UpdateDisplay();
-    }
+        if (_locoIds.Count == 0) return this;
 
-    public override void Disable() { }
-
-    // ── Buttons ───────────────────────────────────────────────────────────────
-
-    public override ButtonBehaviourType ButtonABehaviour =>
-        _locoIds.Count > 1 ? ButtonBehaviourType.Override : ButtonBehaviourType.Ignore;
-
-    public override ButtonBehaviourType ButtonBBehaviour =>
-        _locoIds.Count > 0 ? ButtonBehaviourType.Override : ButtonBehaviourType.Ignore;
-
-    // Button A (◄) — previous loco
-    public override void ButtonACustomAction()
-    {
-        if (_locoIds.Count == 0) return;
-        _index = (_index - 1 + _locoIds.Count) % _locoIds.Count;
-        UpdateDisplay();
-    }
-
-    // Button B (►) — next loco OR confirm (when only one option)
-    public override void ButtonBCustomAction()
-    {
-        if (_locoIds.Count == 0) return;
-
-        if (_locoIds.Count == 1)
+        switch (action)
         {
-            // Single loco — B = confirm
-            ConfirmSelection();
+            case InputAction.Up:
+                return new GRDNCrewState(_host, _locoIds,
+                    (_index - 1 + _locoIds.Count) % _locoIds.Count, false);
+
+            case InputAction.Down:
+                return new GRDNCrewState(_host, _locoIds,
+                    (_index + 1) % _locoIds.Count, false);
+
+            case InputAction.Activate:
+            {
+                string toTrain   = _locoIds[_index];
+                string fromTrain = RadioIntegration.GetPlayerTrainNumber();
+
+                if (string.IsNullOrEmpty(fromTrain))
+                {
+                    Main.ModEntry.Logger.Warning("[CrewMode] Not in a loco — can't re-assign.");
+                    return this;
+                }
+                if (fromTrain == toTrain)
+                {
+                    Main.ModEntry.Logger.Log($"[CrewMode] Already on {toTrain}.");
+                    return this;
+                }
+
+                _host.StartCoroutine(PostCrewUpdate(fromTrain, toTrain));
+                // Return busy state — disables ASSIGN until user navigates away/back
+                return new GRDNCrewState(_host, _locoIds, _index, busy: true);
+            }
+
+            default:
+                return this;
         }
-        else
-        {
-            _index = (_index + 1) % _locoIds.Count;
-            UpdateDisplay();
-        }
-    }
-
-    // ── Confirm selection ─────────────────────────────────────────────────────
-
-    private void ConfirmSelection()
-    {
-        if (_locoIds.Count == 0) return;
-
-        string toTrain   = _locoIds[_index];
-        string fromTrain = RadioIntegration.GetPlayerTrainNumber();
-
-        if (string.IsNullOrEmpty(fromTrain))
-        {
-            display?.SetContent("GRDN CREW", "Not in a loco", Color.red);
-            return;
-        }
-
-        if (fromTrain == toTrain)
-        {
-            display?.SetContent("GRDN CREW", $"Already on {toTrain}", Color.yellow);
-            return;
-        }
-
-        display?.SetContent("GRDN CREW", $"Claiming {toTrain}...", Color.cyan);
-        _host.StartCoroutine(PostCrewUpdate(fromTrain, toTrain));
     }
 
     // ── HTTP push ─────────────────────────────────────────────────────────────
@@ -126,7 +114,7 @@ public class GRDNCrewMode : AStateBehaviour
 
         if (string.IsNullOrEmpty(pushUrl))
         {
-            display?.SetContent("GRDN CREW", "No BotPushUrl set", Color.red);
+            Main.ModEntry.Logger.Warning("[CrewMode] BotPushUrl not set — re-assign skipped.");
             yield break;
         }
 
@@ -145,64 +133,45 @@ public class GRDNCrewMode : AStateBehaviour
             yield return req.SendWebRequest();
 
             if (req.result == UnityWebRequest.Result.Success)
-            {
                 Main.ModEntry.Logger.Log($"[CrewMode] Re-assigned {fromTrain} → {toTrain}");
-                display?.SetContent("GRDN CREW", $"✓ Now on {toTrain}", Color.green);
-            }
             else
-            {
-                Main.ModEntry.Logger.Warning($"[CrewMode] Update failed: {req.error}");
-                display?.SetContent("GRDN CREW", "Update failed", Color.red);
-            }
+                Main.ModEntry.Logger.Warning($"[CrewMode] Update failed ({req.responseCode}): {req.error}");
         }
-    }
-
-    // ── Loco list ─────────────────────────────────────────────────────────────
-
-    private void RefreshLocoList()
-    {
-        _locoIds.Clear();
-        _index = 0;
-
-        var allCars = UnityEngine.Object.FindObjectsOfType<TrainCar>();
-        foreach (var car in allCars)
-        {
-            if (!car.IsLoco) continue;
-            var num = ExtractNumber(car.ID);
-            if (!string.IsNullOrEmpty(num) && !_locoIds.Contains(num))
-                _locoIds.Add(num);
-        }
-
-        _locoIds.Sort(); // consistent order
-
-        // Pre-select the player's current loco if present
-        string myTrain = RadioIntegration.GetPlayerTrainNumber();
-        if (!string.IsNullOrEmpty(myTrain))
-        {
-            int idx = _locoIds.IndexOf(myTrain);
-            if (idx >= 0) _index = idx;
-        }
-    }
-
-    // ── Display ───────────────────────────────────────────────────────────────
-
-    private void UpdateDisplay()
-    {
-        if (display == null) return;
-
-        if (_locoIds.Count == 0)
-        {
-            display.SetContent("GRDN CREW", "No locos found", Color.grey);
-            return;
-        }
-
-        string current  = RadioIntegration.GetPlayerTrainNumber() ?? "?";
-        string selected = _locoIds[_index];
-        string body     = $"{_index + 1}/{_locoIds.Count}  [{selected}]\nNow: {current}";
-        display.SetContent("GRDN CREW", body, Color.white);
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private static string MakeContent(List<string> locos, int idx, bool busy)
+    {
+        if (busy)             return "Sending...";
+        if (locos.Count == 0) return "No locos found";
+
+        string current  = RadioIntegration.GetPlayerTrainNumber() ?? "?";
+        string selected = locos[idx];
+        return $"{idx + 1}/{locos.Count}  [{selected}]\nNow: {current}";
+    }
+
+    private static List<string> ScanLocos()
+    {
+        var list = new List<string>();
+        try
+        {
+            var allCars = UnityEngine.Object.FindObjectsOfType<TrainCar>();
+            foreach (var car in allCars)
+            {
+                if (!car.IsLoco) continue;
+                string num = ExtractNumber(car.ID);
+                if (!string.IsNullOrEmpty(num) && !list.Contains(num))
+                    list.Add(num);
+            }
+            list.Sort();
+        }
+        catch (Exception ex)
+        {
+            Main.ModEntry.Logger.Warning("[CrewMode] ScanLocos: " + ex.Message);
+        }
+        return list;
+    }
 
     private static string ExtractNumber(string id)
     {

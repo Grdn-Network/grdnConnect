@@ -1,34 +1,15 @@
 // RadioIntegration.cs
 // Soft dependency on CommsRadioAPI (https://github.com/fauxnik/dv-comms-radio-api).
-// Wrapped in #if COMMS_RADIO_API so the project compiles even when CommsRadioAPI.dll
-// is absent from lib/. The symbol is defined automatically by GRDNConnect.csproj
-// when the DLL is detected. Without it, TryInit() is a no-op stub.
+// Compiled only when CommsRadioAPI.dll is present in lib/ (COMMS_RADIO_API defined).
+// Without it, TryInit() is a no-op stub and the mod builds/runs without radio support.
 #if COMMS_RADIO_API
-//
-// HOW THE SOFT DEP WORKS
-// ──────────────────────
-// • GRDNRadioMode extends AStateBehaviour, which is in Assembly-CSharp.dll
-//   (already referenced) — no extra compile-time dep needed.
-// • Registration with CommsRadioAPI is done via reflection at runtime.
-//   If the mod is not installed the init silently bails.
-// • Call RadioIntegration.TryInit() from GRDNConnectBehaviour.Start().
-//
-// CHANNEL FORMAT (Settings.RadioChannelsJson)
-// ────────────────────────────────────────────
-//   [{"name":"Main Line","vcId":"123456789"},{"name":"Harbor","vcId":"987654321"}]
-//
-// ON CHANNEL CHANGE → POST {BotPushUrl}/radio-change
-//   Header: x-secret: {BotSecret}
-//   Body:   { "trainNumber": "DE2-034", "vcId": "..." }
-//
-// The bot looks up the Discord user from the train number using its own crew
-// registrations — players don't need to configure a Discord ID here.
 
 using System;
 using System.Collections;
 using System.Collections.Generic;
-using System.Reflection;
 using System.Text;
+using CommsRadioAPI;
+using DV;
 using UnityEngine;
 using UnityEngine.Networking;
 
@@ -40,17 +21,16 @@ using UnityEngine.Networking;
 public static class RadioIntegration
 {
     private static MonoBehaviour _host;
-    private static Assembly      _apiAssembly;
 
     public static void TryInit(MonoBehaviour coroutineHost)
     {
         _host = coroutineHost;
 
-        // 1. Is CommsRadioAPI installed and active?
+        // 1. Is CommsRadioAPI installed and active at runtime?
         var apiMod = UnityModManagerNet.UnityModManager.FindMod("dv-comms-radio-api");
         if (apiMod == null || !apiMod.Active)
         {
-            Main.ModEntry.Logger.Log("[GRDNConnect] CommsRadioAPI not present — radio integration disabled.");
+            Main.ModEntry.Logger.Log("[GRDNConnect] CommsRadioAPI not installed — radio integration disabled.");
             return;
         }
 
@@ -62,72 +42,35 @@ public static class RadioIntegration
             return;
         }
 
-        _apiAssembly = apiMod.Assembly;
-
-        // 3. Register our modes with CommsRadioAPI via reflection.
-        //    CommsRadioAPI exposes ControllerAPI.AddMode(AStateBehaviour).
-        //    We discover the exact type/method name at runtime.
-        try
+        // 3. Register modes when the CommsRadio controller is ready
+        ControllerAPI.Ready += () =>
         {
-            // GRDN Radio — cycle through VC channels
-            var radioMode = new GRDNRadioMode(channels, OnChannelSelected);
-            if (!RegisterMode(_apiAssembly, radioMode))
+            try
             {
-                Main.ModEntry.Logger.Warning("[GRDNConnect] Could not find CommsRadioAPI registration method.");
-                return;
-            }
-            Main.ModEntry.Logger.Log($"[GRDNConnect] Radio mode registered — {channels.Count} channel(s).");
+                // GRDN Radio — cycle Discord voice channels
+                CommsRadioMode.Create(
+                    new GRDNRadioState(channels, OnChannelSelected),
+                    Color.white,
+                    null
+                );
+                Main.ModEntry.Logger.Log($"[GRDNConnect] Radio mode registered — {channels.Count} channel(s).");
 
-            // GRDN Crew — in-game loco assignment / mid-op re-assign
-            var crewMode = new GRDNCrewMode(_host);
-            RegisterMode(_apiAssembly, crewMode); // best-effort; log inside RegisterMode if it fails
-            Main.ModEntry.Logger.Log("[GRDNConnect] Crew mode registered.");
-        }
-        catch (Exception ex)
-        {
-            Main.ModEntry.Logger.Error("[GRDNConnect] Radio init error: " + ex.Message);
-        }
+                // GRDN Crew — in-game loco assignment
+                CommsRadioMode.Create(
+                    new GRDNCrewState(_host),
+                    Color.yellow,
+                    null
+                );
+                Main.ModEntry.Logger.Log("[GRDNConnect] Crew mode registered.");
+            }
+            catch (Exception ex)
+            {
+                Main.ModEntry.Logger.Error("[GRDNConnect] Radio init error: " + ex.Message);
+            }
+        };
     }
 
-    // ── Registration via reflection ───────────────────────────────────────────
-
-    private static bool RegisterMode(Assembly apiAssembly, AStateBehaviour mode)
-    {
-        // Try the most likely class/method name combinations from CommsRadioAPI.
-        // If fauxnik changes the API shape, update the strings below.
-        string[] classNames  = { "CommsRadioAPI.ControllerAPI", "ControllerAPI" };
-        string[] methodNames = { "AddMode", "RegisterMode", "AddRadioMode" };
-
-        foreach (var cls in classNames)
-        {
-            var type = apiAssembly.GetType(cls);
-            if (type == null) continue;
-
-            foreach (var mth in methodNames)
-            {
-                var method = type.GetMethod(mth,
-                    BindingFlags.Public | BindingFlags.Static,
-                    null,
-                    new[] { typeof(AStateBehaviour) },
-                    null);
-
-                if (method == null) continue;
-
-                method.Invoke(null, new object[] { mode });
-                Main.ModEntry.Logger.Log($"[GRDNConnect] Registered via {cls}.{mth}()");
-                return true;
-            }
-        }
-
-        // Dump available types so the user can report the correct name
-        Main.ModEntry.Logger.Warning("[GRDNConnect] CommsRadioAPI registration not found. Available types:");
-        foreach (var t in apiAssembly.GetExportedTypes())
-            Main.ModEntry.Logger.Warning("  " + t.FullName);
-
-        return false;
-    }
-
-    // ── Push callback (runs on the coroutine host MonoBehaviour) ─────────────
+    // ── Push callback ─────────────────────────────────────────────────────────
 
     internal static void OnChannelSelected(string vcId)
     {
@@ -137,7 +80,7 @@ public static class RadioIntegration
 
     private static IEnumerator PushRadioChange(string vcId)
     {
-        string pushUrl = (Main.Settings.BotPushUrl?.TrimEnd('/') ?? "");
+        string pushUrl = Main.Settings.BotPushUrl?.TrimEnd('/') ?? "";
         string secret  = Main.Settings.BotSecret ?? "";
 
         if (string.IsNullOrEmpty(pushUrl))
@@ -146,8 +89,6 @@ public static class RadioIntegration
             yield break;
         }
 
-        // Identify the player by their current loco ID (e.g. "DE2-034").
-        // The bot matches this to a Discord user via its /setcrew registrations.
         string trainNumber = GetPlayerTrainNumber();
         if (string.IsNullOrEmpty(trainNumber))
         {
@@ -178,12 +119,6 @@ public static class RadioIntegration
 
     // ── Player loco detection ─────────────────────────────────────────────────
 
-    /// <summary>
-    /// Returns the NUMERIC portion of the local player's current loco ID.
-    /// e.g. "DE2-034" → "034"  |  "DH4-201" → "201"
-    /// This matches the train number format players enter in /setcrew on Discord.
-    /// Returns null if the player is not inside a locomotive.
-    /// </summary>
     internal static string GetPlayerTrainNumber()
     {
         try
@@ -191,7 +126,6 @@ public static class RadioIntegration
             var car = PlayerManager.Car;
             if (car == null) return null;
 
-            // Walk up to the loco if the player is in a coupled wagon
             TrainCar loco = null;
             if (car.IsLoco)
             {
@@ -205,7 +139,6 @@ public static class RadioIntegration
 
             if (loco == null) return null;
 
-            // Extract trailing digits: "DE2-034" → "034", "DH4-201" → "201"
             var match = System.Text.RegularExpressions.Regex.Match(loco.ID ?? "", @"(\d+)$");
             return match.Success ? match.Groups[1].Value : loco.ID;
         }
@@ -225,8 +158,6 @@ public static class RadioIntegration
 
         try
         {
-            // Walks through the JSON array extracting {"name":"...","vcId":"..."} pairs.
-            // Avoids any runtime JSON library dependency.
             int pos = 0;
             while (pos < json.Length)
             {
@@ -261,95 +192,59 @@ public static class RadioIntegration
         return json.Substring(o + 1, e - o - 1);
     }
 
-    private static string Esc(string s) =>
+    internal static string Esc(string s) =>
         s?.Replace("\\", "\\\\").Replace("\"", "\\\"") ?? "";
 }
 
-// ── Radio mode ─────────────────────────────────────────────────────────────────
-//
-// Extends DV's AStateBehaviour (Assembly-CSharp.dll — already referenced).
-// CommsRadioAPI plugs custom AStateBehaviour instances into the in-game radio.
-//
-// CONTROLS
-//   Button A (left/◄)  — previous channel
-//   Button B (right/►) — next channel
-//   Tuning to a channel immediately pushes to Discord bot.
-//
-// DISPLAY
-//   Header : GRDN RADIO
-//   Body   : "1/3  Main Line"   (index / total  name)
-// ─────────────────────────────────────────────────────────────────────────────
+// ── GRDN Radio state ──────────────────────────────────────────────────────────
+// One state = one LCD screen. OnAction returns a new state with updated index.
 
-public class GRDNRadioMode : AStateBehaviour
+public class GRDNRadioState : AStateBehaviour
 {
     private readonly List<(string name, string vcId)> _channels;
-    private readonly Action<string>                   _onSelected;
-    private int _index;
+    private readonly Action<string> _onSelected;
+    private readonly int _index;
 
-    public GRDNRadioMode(List<(string name, string vcId)> channels, Action<string> onSelected)
+    public GRDNRadioState(List<(string name, string vcId)> channels, Action<string> onSelected, int index = 0)
+        : base(new CommsRadioState(
+            "GRDN RADIO",
+            MakeContent(channels, index),
+            channels.Count > 1 ? "TUNE" : "",
+            LCDArrowState.Off,
+            LEDState.Off,
+            channels.Count > 1 ? ButtonBehaviourType.Override : ButtonBehaviourType.Ignore))
     {
         _channels   = channels;
         _onSelected = onSelected;
-        _index      = 0;
+        _index      = index;
     }
 
-    // ── AStateBehaviour lifecycle ─────────────────────────────────────────────
-
-    public override void Enable()
+    private static string MakeContent(List<(string name, string vcId)> channels, int idx)
     {
-        UpdateDisplay();
+        if (channels.Count == 0) return "No channels";
+        return $"{idx + 1}/{channels.Count}  {channels[idx].name}";
     }
 
-    public override void Disable() { }
-
-    // ── Button behaviour ──────────────────────────────────────────────────────
-    //
-    // ButtonBehaviourType.Override  — this mode handles the button
-    // ButtonBehaviourType.Ignore    — button is disabled / not used
-
-    public override ButtonBehaviourType ButtonABehaviour =>
-        _channels.Count > 1 ? ButtonBehaviourType.Override : ButtonBehaviourType.Ignore;
-
-    public override ButtonBehaviourType ButtonBBehaviour =>
-        _channels.Count > 1 ? ButtonBehaviourType.Override : ButtonBehaviourType.Ignore;
-
-    // Button A (left / ◄) — previous channel
-    public override void ButtonACustomAction()
+    public override AStateBehaviour OnAction(CommsRadioUtility utility, InputAction action)
     {
-        if (_channels.Count == 0) return;
-        _index = (_index - 1 + _channels.Count) % _channels.Count;
-        UpdateDisplay();
-        _onSelected?.Invoke(_channels[_index].vcId);
-    }
+        if (_channels.Count == 0) return this;
 
-    // Button B (right / ►) — next channel
-    public override void ButtonBCustomAction()
-    {
-        if (_channels.Count == 0) return;
-        _index = (_index + 1) % _channels.Count;
-        UpdateDisplay();
-        _onSelected?.Invoke(_channels[_index].vcId);
-    }
+        int next = _index;
+        if      (action == InputAction.Up)   next = (_index - 1 + _channels.Count) % _channels.Count;
+        else if (action == InputAction.Down) next = (_index + 1) % _channels.Count;
+        else return this;
 
-    // ── LCD display ───────────────────────────────────────────────────────────
-
-    private void UpdateDisplay()
-    {
-        if (display == null || _channels.Count == 0) return;
-        var ch   = _channels[_index];
-        var body = $"{_index + 1}/{_channels.Count}  {ch.name}";
-        // SetContent signature: (string header, string content, Color color)
-        // Adjust if CommsRadioAPI/DV uses a different overload.
-        display.SetContent("GRDN RADIO", body, Color.white);
+        _onSelected?.Invoke(_channels[next].vcId);
+        return new GRDNRadioState(_channels, _onSelected, next);
     }
 }
 
 #else
 // ── Stub — compiled when CommsRadioAPI.dll is absent from lib/ ────────────────
-// Provides a no-op TryInit() so GRDNConnectBehaviour compiles without errors.
 public static class RadioIntegration
 {
     public static void TryInit(UnityEngine.MonoBehaviour host) { }
     internal static string GetPlayerTrainNumber() => null;
+    internal static string Esc(string s) => s ?? "";
 }
 #endif
