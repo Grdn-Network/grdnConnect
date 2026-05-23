@@ -182,7 +182,7 @@ public static class RadioIntegration
     /// Confirmed: LocoDiesel=DE6, LocoSteamHeavy=S282, LocoMicroshunter=BE2.
     /// Others are best-guess based on DV naming conventions — verify in-game if needed.
     /// </summary>
-    private static string MapCarType(string carType)
+    internal static string MapCarType(string carType)
     {
         switch (carType)
         {
