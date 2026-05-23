@@ -275,6 +275,10 @@ public class GRDNConnectBehaviour : MonoBehaviour
 			{
 				HandleSessionConfig(ctx.Request, ctx.Response);
 			}
+			else if (ctx.Request.HttpMethod == "GET" && text == "/debug-boturl")
+			{
+				HandleDebugBotUrl(ctx.Response);
+			}
 			else
 			{
 				SendJson(ctx.Response, 404, "{\"error\":\"Not found\"}");
@@ -492,6 +496,39 @@ public class GRDNConnectBehaviour : MonoBehaviour
 		var (ok, error) = JobCompletionHelper.TryCompleteJob(text);
 		string errorField = !string.IsNullOrEmpty(error) ? $",\"error\":\"{Escape(error)}\"" : "";
 		SendJson(res, ok ? 200 : 404, $"{{\"ok\":{(ok ? "true" : "false")},\"jobId\":\"{Escape(text)}\"{errorField}}}");
+	}
+
+	// ── GET /debug-boturl ────────────────────────────────────────────────────
+	// Returns the URL and secret source that GRDN Crew and radio integrations
+	// will use. Hit http://localhost:7230/debug-boturl in a browser while in-game
+	// to confirm the game is pointing at your bot, not at itself.
+	private void HandleDebugBotUrl(HttpListenerResponse res)
+	{
+		string sessionUrl = _sessionBotUrl;
+		string settingsUrl = Main.Settings.BotPushUrl;
+		string activeUrl = ActiveBotUrl;
+
+		// Mask secret — show first 4 chars then ****
+		string sessionSecret = _sessionBotSecret;
+		string settingsSecret = Main.Settings.BotSecret;
+		string MaskSecret(string s) =>
+			string.IsNullOrEmpty(s) ? "(empty)" :
+			(s.Length <= 4 ? "****" : s.Substring(0, 4) + "****");
+
+		string source = !string.IsNullOrEmpty(sessionUrl) ? "session-config (pushed by bot)" : "UMM Settings (BotPushUrl)";
+
+		var sb = new StringBuilder();
+		sb.Append("{");
+		sb.Append($"\"activeUrl\":\"{Escape(activeUrl ?? "")}\",");
+		sb.Append($"\"source\":\"{Escape(source)}\",");
+		sb.Append($"\"sessionUrl\":\"{Escape(sessionUrl ?? "(not set)")}\",");
+		sb.Append($"\"settingsUrl\":\"{Escape(settingsUrl ?? "(not set)")}\",");
+		sb.Append($"\"sessionSecret\":\"{Escape(MaskSecret(sessionSecret))}\",");
+		sb.Append($"\"settingsSecret\":\"{Escape(MaskSecret(settingsSecret))}\"");
+		sb.Append("}");
+
+		Main.ModEntry.Logger.Log($"[GRDNConnect] /debug-boturl → activeUrl={activeUrl ?? "(null)"} source={source}");
+		SendJson(res, 200, sb.ToString());
 	}
 
 	// ── POST /session-config ──────────────────────────────────────────────────

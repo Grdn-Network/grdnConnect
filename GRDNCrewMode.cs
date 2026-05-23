@@ -200,10 +200,13 @@ public class GRDNCrewState : AStateBehaviour
             ? $",\"steamId\":\"{steamId}\",\"steamName\":\"{Esc(steamName)}\""
             : "";
 
+        string fullUrl = pushUrl + "/update-crew";
+        Main.ModEntry.Logger.Log($"[CrewMode] Posting to: {fullUrl}");
+
         string body = $"{{\"fromTrainNumber\":\"{Esc(fromTrain)}\",\"toTrainNumber\":\"{Esc(toTrain)}\"{locoField}{steamField}}}";
         byte[] raw  = Encoding.UTF8.GetBytes(body);
 
-        using (var req = new UnityWebRequest(pushUrl + "/update-crew", "POST"))
+        using (var req = new UnityWebRequest(fullUrl, "POST"))
         {
             req.uploadHandler   = new UploadHandlerRaw(raw);
             req.downloadHandler = new DownloadHandlerBuffer();
@@ -222,7 +225,7 @@ public class GRDNCrewState : AStateBehaviour
             else
             {
                 Main.ModEntry.Logger.Warning(
-                    $"[CrewMode] Request failed ({req.responseCode}): {req.error}");
+                    $"[CrewMode] Request failed ({req.responseCode}): {req.error} | url={fullUrl}");
             }
         }
     }
