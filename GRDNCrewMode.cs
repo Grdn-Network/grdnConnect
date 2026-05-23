@@ -188,7 +188,14 @@ public class GRDNCrewState : AStateBehaviour
             ? $",\"locoType\":\"{Esc(locoType)}\""
             : "";
 
-        string body = $"{{\"fromTrainNumber\":\"{Esc(fromTrain)}\",\"toTrainNumber\":\"{Esc(toTrain)}\"{locoField}}}";
+        // Include Steam identity so the bot can auto-link Discord ↔ Steam on first push.
+        // Returns (0, "") gracefully if Steamworks is unavailable.
+        var (steamId, steamName) = RadioIntegration.GetLocalSteamInfo();
+        string steamField = steamId > 0
+            ? $",\"steamId\":\"{steamId}\",\"steamName\":\"{Esc(steamName)}\""
+            : "";
+
+        string body = $"{{\"fromTrainNumber\":\"{Esc(fromTrain)}\",\"toTrainNumber\":\"{Esc(toTrain)}\"{locoField}{steamField}}}";
         byte[] raw  = Encoding.UTF8.GetBytes(body);
 
         using (var req = new UnityWebRequest(pushUrl + "/update-crew", "POST"))

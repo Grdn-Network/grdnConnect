@@ -284,6 +284,28 @@ public static class RadioIntegration
 
     internal static string Esc(string s) =>
         s?.Replace("\\", "\\\\").Replace("\"", "\\\"") ?? "";
+
+    // ── Steam identity ────────────────────────────────────────────────────────
+    // Returns the local player's Steam ID64 and display name.
+    // Requires STEAM_API compile flag (Facepunch.Steamworks.Win64.dll in lib/).
+    // Returns (0, "") gracefully if Steam is not initialised or DLL absent.
+    internal static (ulong id, string name) GetLocalSteamInfo()
+    {
+#if STEAM_API
+        try
+        {
+            if (!Steamworks.SteamClient.IsValid) return (0, "");
+            ulong  id   = Steamworks.SteamClient.SteamId.Value;
+            string name = Steamworks.SteamClient.Name ?? "";
+            return (id, name);
+        }
+        catch (Exception ex)
+        {
+            Main.ModEntry.Logger.Warning("[GRDNConnect] GetLocalSteamInfo: " + ex.Message);
+        }
+#endif
+        return (0, "");
+    }
 }
 
 // ── GRDN Radio state ──────────────────────────────────────────────────────────
@@ -370,5 +392,6 @@ public static class RadioIntegration
     internal static void UpdateChannelsFromJson(string json) { }
     internal static string GetPlayerTrainNumber() => null;
     internal static string Esc(string s) => s ?? "";
+    internal static (ulong id, string name) GetLocalSteamInfo() => (0, "");
 }
 #endif
