@@ -7,3 +7,5 @@ obj/
 # Do NOT commit these: their presence/absence controls #if COMMS_RADIO_API.
 lib/CommsRadioAPI.dll
 lib/0Harmony.dll
+# Hardcoded bot defaults — fill in locally, never commit
+GRDNDefaults.cs

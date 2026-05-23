@@ -24,17 +24,21 @@ public class GRDNConnectBehaviour : MonoBehaviour
 
 	/// <summary>
 	/// The bot's base URL for this session.
-	/// Falls back to the UMM Settings value if no session handshake has run yet.
+	/// Priority: session-config push → UMM Settings → hardcoded default (GRDNDefaults.cs).
 	/// </summary>
 	internal static string ActiveBotUrl =>
-		!string.IsNullOrEmpty(_sessionBotUrl)    ? _sessionBotUrl    : Main.Settings.BotPushUrl;
+		!string.IsNullOrEmpty(_sessionBotUrl)           ? _sessionBotUrl           :
+		!string.IsNullOrEmpty(Main.Settings.BotPushUrl) ? Main.Settings.BotPushUrl :
+		GRDNDefaults.BotUrl;
 
 	/// <summary>
 	/// The bot's shared secret for this session.
-	/// Falls back to the UMM Settings value if no session handshake has run yet.
+	/// Priority: session-config push → UMM Settings → hardcoded default (GRDNDefaults.cs).
 	/// </summary>
 	internal static string ActiveBotSecret =>
-		!string.IsNullOrEmpty(_sessionBotSecret) ? _sessionBotSecret : Main.Settings.BotSecret;
+		!string.IsNullOrEmpty(_sessionBotSecret)        ? _sessionBotSecret        :
+		!string.IsNullOrEmpty(Main.Settings.BotSecret)  ? Main.Settings.BotSecret  :
+		GRDNDefaults.BotSecret;
 
 	private void Awake()
 	{
