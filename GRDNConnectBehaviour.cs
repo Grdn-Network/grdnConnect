@@ -444,6 +444,9 @@ public class GRDNConnectBehaviour : MonoBehaviour
 		if (secret != null)
 			_sessionBotSecret = secret;
 
+		// Update live radio channel list (always safe to call — no-ops if no channels key)
+		RadioIntegration.UpdateChannelsFromJson(json);
+
 		Main.ModEntry.Logger.Log(
 			$"[GRDNConnect] Session config received — url={_sessionBotUrl ?? "(unchanged)"}");
 		SendJson(res, 200, "{\"ok\":true}");

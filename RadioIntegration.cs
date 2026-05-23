@@ -22,6 +22,47 @@ public static class RadioIntegration
 {
     private static MonoBehaviour _host;
 
+    // ── Dynamic channel list — pushed by the bot on /session start + every 90s ─
+    private static List<(string name, string vcId)> _sessionChannels
+        = new List<(string, string)>();
+
+    /// <summary>
+    /// Live channel list for GRDN RADIO.
+    /// Prefers channels pushed via /session-config; falls back to UMM settings.
+    /// </summary>
+    internal static List<(string name, string vcId)> ActiveChannels =>
+        _sessionChannels.Count > 0
+            ? _sessionChannels
+            : ParseChannels(Main.Settings.RadioChannelsJson);
+
+    /// <summary>
+    /// Parses the "channels" array from a /session-config JSON body and stores it.
+    /// Called by GRDNConnectBehaviour.HandleSessionConfig on every push.
+    /// </summary>
+    internal static void UpdateChannelsFromJson(string sessionConfigJson)
+    {
+        string arr = ExtractJsonArray(sessionConfigJson, "channels");
+        if (arr == null) return;
+        var channels = ParseChannels(arr);
+        _sessionChannels = channels;
+        Main.ModEntry.Logger.Log($"[GRDNConnect] Radio channels updated: {channels.Count} channel(s).");
+    }
+
+    private static string ExtractJsonArray(string json, string key)
+    {
+        int ki = json.IndexOf($"\"{key}\"", StringComparison.Ordinal);
+        if (ki < 0) return null;
+        int ci = json.IndexOf('[', ki);
+        if (ci < 0) return null;
+        int depth = 0;
+        for (int i = ci; i < json.Length; i++)
+        {
+            if      (json[i] == '[') depth++;
+            else if (json[i] == ']') { if (--depth == 0) return json.Substring(ci, i - ci + 1); }
+        }
+        return null;
+    }
+
     public static void TryInit(MonoBehaviour coroutineHost)
     {
         _host = coroutineHost;
@@ -34,8 +75,8 @@ public static class RadioIntegration
             return;
         }
 
-        // 2. Parse channels for GRDN Radio (empty = radio mode skipped, crew mode still loads)
-        var channels = ParseChannels(Main.Settings.RadioChannelsJson);
+        // 2. Seed initial channel list (bot will push a live update on /session start)
+        var channels = ActiveChannels;
 
         // 3. Register modes when the CommsRadio controller is ready
         ControllerAPI.Ready += () =>
@@ -288,23 +329,24 @@ public class GRDNRadioState : AStateBehaviour
 
     public override AStateBehaviour OnAction(CommsRadioUtility utility, InputAction action)
     {
-        if (_channels.Count == 0) return this;
+        // Always read the live channel list — picks up updates pushed by the bot mid-session
+        var ch = RadioIntegration.ActiveChannels;
 
         switch (action)
         {
-            // Up / Down — scroll through channels (no VC move yet)
             case InputAction.Up:
-                return new GRDNRadioState(_channels, _onSelected,
-                    (_index - 1 + _channels.Count) % _channels.Count);
+                if (ch.Count == 0) return this;
+                return new GRDNRadioState(ch, _onSelected, (_index - 1 + ch.Count) % ch.Count);
 
             case InputAction.Down:
-                return new GRDNRadioState(_channels, _onSelected,
-                    (_index + 1) % _channels.Count);
+                if (ch.Count == 0) return this;
+                return new GRDNRadioState(ch, _onSelected, (_index + 1) % ch.Count);
 
-            // Activate — confirm and send the VC move request
             case InputAction.Activate:
-                _onSelected?.Invoke(_channels[_index].vcId);
-                return new GRDNRadioState(_channels, _onSelected, _index, sent: true);
+                if (ch.Count == 0) return this;
+                int idx = Math.Min(_index, ch.Count - 1);
+                _onSelected?.Invoke(ch[idx].vcId);
+                return new GRDNRadioState(ch, _onSelected, idx, sent: true);
 
             default:
                 return this;
@@ -317,6 +359,7 @@ public class GRDNRadioState : AStateBehaviour
 public static class RadioIntegration
 {
     public static void TryInit(UnityEngine.MonoBehaviour host) { }
+    internal static void UpdateChannelsFromJson(string json) { }
     internal static string GetPlayerTrainNumber() => null;
     internal static string Esc(string s) => s ?? "";
 }
