@@ -149,6 +149,57 @@ public static class RadioIntegration
         }
     }
 
+    /// <summary>
+    /// Returns the GRDN loco type code for the player's current loco (e.g. "DE6", "S282").
+    /// Returns null if the player is not in a loco or the type is unrecognised.
+    /// </summary>
+    internal static string GetPlayerLocoTypeCode()
+    {
+        try
+        {
+            var car = PlayerManager.Car;
+            if (car == null) return null;
+
+            TrainCar loco = null;
+            if (car.IsLoco)
+                loco = car;
+            else if (car.trainset?.cars != null)
+                foreach (var c in car.trainset.cars)
+                    if (c != null && c.IsLoco) { loco = c; break; }
+
+            if (loco == null) return null;
+            return MapCarType(((object)loco.carType).ToString());
+        }
+        catch (Exception ex)
+        {
+            Main.ModEntry.Logger.Warning("[GRDNConnect] GetPlayerLocoTypeCode: " + ex.Message);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Maps a DV TrainCarType enum name to the GRDN loco type code used in /setcrew.
+    /// Confirmed: LocoDiesel=DE6, LocoSteamHeavy=S282, LocoMicroshunter=BE2.
+    /// Others are best-guess based on DV naming conventions — verify in-game if needed.
+    /// </summary>
+    private static string MapCarType(string carType)
+    {
+        switch (carType)
+        {
+            // ── Confirmed ────────────────────────────────────────────────────
+            case "LocoDiesel":        return "DE6";
+            case "LocoSteamHeavy":    return "S282";
+            case "LocoMicroshunter":  return "BE2";
+            // ── Best-guess (verify against actual TrainCarType enum) ─────────
+            case "LocoShunter":       return "DE2";
+            case "LocoDH4":           return "DH4";
+            case "LocoDM3":           return "DM3";
+            case "LocoS060":          return "S060";
+            case "HandCar":           return "Handcar";
+            default:                  return null;  // unknown — locoType omitted from push
+        }
+    }
+
     // ── JSON channel parser ───────────────────────────────────────────────────
 
     internal static List<(string name, string vcId)> ParseChannels(string json)
