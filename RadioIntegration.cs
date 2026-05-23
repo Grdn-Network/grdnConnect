@@ -203,24 +203,32 @@ public class GRDNRadioState : AStateBehaviour
 {
     private readonly List<(string name, string vcId)> _channels;
     private readonly Action<string> _onSelected;
-    private readonly int _index;
+    private readonly int  _index;
+    private readonly bool _sent;   // true while showing "Switching..." confirmation
 
-    public GRDNRadioState(List<(string name, string vcId)> channels, Action<string> onSelected, int index = 0)
+    public GRDNRadioState(
+        List<(string name, string vcId)> channels,
+        Action<string> onSelected,
+        int  index = 0,
+        bool sent  = false)
         : base(new CommsRadioState(
             "GRDN RADIO",
-            MakeContent(channels, index),
-            channels.Count > 1 ? "TUNE" : "",
+            MakeContent(channels, index, sent),
+            // Button label: blank while sent/no channels, otherwise "SWITCH"
+            (!sent && channels.Count > 0) ? "SWITCH" : "",
             LCDArrowState.Off,
             LEDState.Off,
-            channels.Count > 1 ? ButtonBehaviourType.Override : ButtonBehaviourType.Ignore))
+            (!sent && channels.Count > 0) ? ButtonBehaviourType.Override : ButtonBehaviourType.Ignore))
     {
         _channels   = channels;
         _onSelected = onSelected;
         _index      = index;
+        _sent       = sent;
     }
 
-    private static string MakeContent(List<(string name, string vcId)> channels, int idx)
+    private static string MakeContent(List<(string name, string vcId)> channels, int idx, bool sent)
     {
+        if (sent)              return "Switching...";
         if (channels.Count == 0) return "No channels";
         return $"{idx + 1}/{channels.Count}  {channels[idx].name}";
     }
@@ -229,13 +237,25 @@ public class GRDNRadioState : AStateBehaviour
     {
         if (_channels.Count == 0) return this;
 
-        int next = _index;
-        if      (action == InputAction.Up)   next = (_index - 1 + _channels.Count) % _channels.Count;
-        else if (action == InputAction.Down) next = (_index + 1) % _channels.Count;
-        else return this;
+        switch (action)
+        {
+            // Up / Down — scroll through channels (no VC move yet)
+            case InputAction.Up:
+                return new GRDNRadioState(_channels, _onSelected,
+                    (_index - 1 + _channels.Count) % _channels.Count);
 
-        _onSelected?.Invoke(_channels[next].vcId);
-        return new GRDNRadioState(_channels, _onSelected, next);
+            case InputAction.Down:
+                return new GRDNRadioState(_channels, _onSelected,
+                    (_index + 1) % _channels.Count);
+
+            // Activate — confirm and send the VC move request
+            case InputAction.Activate:
+                _onSelected?.Invoke(_channels[_index].vcId);
+                return new GRDNRadioState(_channels, _onSelected, _index, sent: true);
+
+            default:
+                return this;
+        }
     }
 }
 
