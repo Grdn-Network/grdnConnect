@@ -23,6 +23,31 @@ jobs:
         with:
           dotnet-version: '8.x'   # SDK only needed for MSBuild; net48 TFM is pre-installed on windows-latest
 
+      - name: Download CommsRadioAPI
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path "lib" -Force | Out-Null
+          $release = Invoke-RestMethod `
+            -Uri "https://api.github.com/repos/fauxnik/dv-comms-radio-api/releases/latest" `
+            -Headers @{ "User-Agent" = "GRDNConnect-CI" }
+          # Try a bare .dll asset first, fall back to zip extraction
+          $dll = $release.assets | Where-Object { $_.name -like "*CommsRadioAPI*.dll" } | Select-Object -First 1
+          if ($dll) {
+            Invoke-WebRequest -Uri $dll.browser_download_url -OutFile "lib\CommsRadioAPI.dll"
+            Write-Host "Downloaded $($dll.name)"
+          } else {
+            $zip = $release.assets | Where-Object { $_.name -like "*.zip" } | Select-Object -First 1
+            if (-not $zip) { Write-Error "No CommsRadioAPI asset found in release"; exit 1 }
+            Invoke-WebRequest -Uri $zip.browser_download_url -OutFile "CommsRadioAPI.zip"
+            Expand-Archive -Path "CommsRadioAPI.zip" -DestinationPath "CommsRadioAPI_extracted" -Force
+            $found = Get-ChildItem -Path "CommsRadioAPI_extracted" -Filter "CommsRadioAPI.dll" -Recurse |
+                     Select-Object -First 1
+            if (-not $found) { Write-Error "CommsRadioAPI.dll not found inside zip"; exit 1 }
+            Copy-Item $found.FullName "lib\CommsRadioAPI.dll"
+            Write-Host "Extracted CommsRadioAPI.dll from $($zip.name)"
+          }
+          Write-Host "lib\CommsRadioAPI.dll is ready — COMMS_RADIO_API will be defined"
+
       - name: Restore NuGet packages
         run: dotnet restore GRDNConnect.csproj
 
