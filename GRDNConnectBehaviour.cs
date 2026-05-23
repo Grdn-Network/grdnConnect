@@ -85,10 +85,12 @@ public class GRDNConnectBehaviour : MonoBehaviour
 
 		StopListener();
 
-		_listener = new HttpListener();
-		_listener.Prefixes.Add($"http://*:{port}/");
+		// ALL of this is inside try/catch so a failure here never prevents
+		// RadioIntegration.TryInit() from running in Start().
 		try
 		{
+			_listener = new HttpListener();
+			_listener.Prefixes.Add($"http://*:{port}/");
 			_listener.Start();
 			_activePort = port;
 			Main.ModEntry.Logger.Log($"[GRDNConnect] Listening on port {port}.");
@@ -97,6 +99,7 @@ public class GRDNConnectBehaviour : MonoBehaviour
 		catch (Exception ex)
 		{
 			_activePort = -1;
+			_listener   = null;
 			Main.ModEntry.Logger.Error($"[GRDNConnect] Failed to start on port {port}: {ex.Message}");
 		}
 	}

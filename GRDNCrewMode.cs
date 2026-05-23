@@ -115,14 +115,10 @@ public class GRDNCrewState : AStateBehaviour
                 if (_trainNumber == null)
                     return new GRDNCrewState(_host, ScanTarget(utility.SignalOrigin), sent: false);
 
-                // Only the session host pushes crew updates to the bot.
-                // Clients have the mod for the comms menu UI only — their
-                // loco assignment is handled via the Steam ID auto-link flow.
-                if (!GRDNConnectBehaviour.IsHostOrSingleplayer())
-                {
-                    Main.ModEntry.Logger.Log("[CrewMode] Client — skipping crew push (host-only).");
-                    return new GRDNCrewState(_host, (_trainNumber, _locoType), sent: true);
-                }
+                // Every player assigns THEMSELVES: each ASSIGN press sends the local
+                // player's own Steam ID, so host and clients update their own records
+                // independently — no cross-player conflict. The bot uses steamId to
+                // match the Discord account and update the crew entry.
 
                 // fromTrain: where the bot will look for the existing registration.
                 // First use this session → assume the targeted loco is already registered

@@ -16,7 +16,7 @@ public class Settings : UnityModManager.ModSettings, IDrawable
     // The bot matches players to Discord automatically via their in-game train
     // number — no per-player Discord ID needed. Set BotPushUrl/BotSecret once.
 
-    [Draw("Bot Push URL — auto-set by /session start; only needed here as a manual fallback")]
+    [Draw("Bot Push URL — host: auto-set by /session start. Clients: set this manually so GRDN Radio channels and crew updates work.")]
     public string BotPushUrl = "";
 
     [Draw("Bot Secret — auto-set by /session start; only needed here as a manual fallback")]
