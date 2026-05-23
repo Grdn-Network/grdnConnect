@@ -79,32 +79,33 @@ public static class RadioIntegration
         // 2. Seed initial channel list (bot will push a live update on /session start)
         var channels = ActiveChannels;
 
-        // 3. Register modes when the CommsRadio controller is ready
+        // 3. Register modes when the CommsRadio controller is ready.
+        //    Each mode has its own try/catch so a failure in one doesn't
+        //    prevent the other from registering.
         ControllerAPI.Ready += () =>
         {
+            // GRDN Radio — always registered. Idle until player presses BROWSE.
+            // ActiveChannels is read live on each open so updates from the bot
+            // or from the polling coroutine appear without a game restart.
             try
             {
-                // GRDN Radio — always registered. Shows "No channels" until the bot
-                // pushes session-config; OnAction reads ActiveChannels live so channels
-                // appear as soon as /session start runs, without a game restart.
-                CommsRadioMode.Create(
-                    new GRDNRadioState(channels, OnChannelSelected),
-                    Color.white,
-                    null
-                );
-                Main.ModEntry.Logger.Log($"[GRDNConnect] Radio mode registered — {channels.Count} channel(s) at load time.");
-
-                // GRDN Crew — in-game loco assignment (always registered, no channels needed)
-                CommsRadioMode.Create(
-                    new GRDNCrewState(_host),
-                    Color.yellow,
-                    null
-                );
-                Main.ModEntry.Logger.Log("[GRDNConnect] Crew mode registered.");
+                CommsRadioMode.Create(new GRDNRadioState(channels, OnChannelSelected), Color.white, null);
+                Main.ModEntry.Logger.Log($"[GRDNConnect] GRDN RADIO registered — {channels.Count} channel(s) at load time.");
             }
             catch (Exception ex)
             {
-                Main.ModEntry.Logger.Error("[GRDNConnect] Radio init error: " + ex.Message);
+                Main.ModEntry.Logger.Error("[GRDNConnect] GRDN RADIO init error: " + ex.Message);
+            }
+
+            // GRDN Crew — in-game loco assignment (independent of radio channels)
+            try
+            {
+                CommsRadioMode.Create(new GRDNCrewState(_host), Color.yellow, null);
+                Main.ModEntry.Logger.Log("[GRDNConnect] GRDN CREW registered.");
+            }
+            catch (Exception ex)
+            {
+                Main.ModEntry.Logger.Error("[GRDNConnect] GRDN CREW init error: " + ex.Message);
             }
         };
     }
@@ -128,15 +129,35 @@ public static class RadioIntegration
             yield break;
         }
 
+        // RealisticRadio: require player to be in a loco before switching channels.
+        // Default off — anyone can switch their Discord VC from anywhere.
         string trainNumber = GetPlayerTrainNumber();
-        if (string.IsNullOrEmpty(trainNumber))
+        if (Main.Settings.RealisticRadio && string.IsNullOrEmpty(trainNumber))
         {
-            Main.ModEntry.Logger.Warning("[GRDNConnect] Radio push skipped — player not in a loco.");
+            Main.ModEntry.Logger.Warning("[GRDNConnect] Radio push skipped — not in a loco (RealisticRadio on).");
             yield break;
         }
 
+        // Always include Steam ID so the bot can resolve the player without a
+        // train-number lookup (works even for clients not assigned a train yet).
+        var (steamId, _) = GetLocalSteamInfo();
+
+        // Need at least one identifier to route the push
+        if (steamId == 0 && string.IsNullOrEmpty(trainNumber))
+        {
+            Main.ModEntry.Logger.Warning("[GRDNConnect] Radio push skipped — no Steam ID and no train number.");
+            yield break;
+        }
+
+        var fields = new System.Text.StringBuilder();
+        fields.Append($"\"vcId\":\"{Esc(vcId)}\"");
+        if (steamId > 0)
+            fields.Append($",\"steamId\":\"{steamId}\"");
+        if (!string.IsNullOrEmpty(trainNumber))
+            fields.Append($",\"trainNumber\":\"{Esc(trainNumber)}\"");
+
         string url  = pushUrl + "/radio-change";
-        string body = $"{{\"trainNumber\":\"{Esc(trainNumber)}\",\"vcId\":\"{Esc(vcId)}\"}}";
+        string body = "{" + fields.ToString() + "}";
         byte[] raw  = Encoding.UTF8.GetBytes(body);
 
         using (var req = new UnityWebRequest(url, "POST"))
@@ -285,6 +306,52 @@ public static class RadioIntegration
     internal static string Esc(string s) =>
         s?.Replace("\\", "\\\\").Replace("\"", "\\\"") ?? "";
 
+    // ── Channel polling — self-serve for clients joining after session start ──
+    // Clients never receive the bot's /session-config push (that goes to the host).
+    // This coroutine GETs /radio-channels from the bot URL every 60 seconds so any
+    // client with BotPushUrl set always has a live channel list in GRDN RADIO.
+    internal static void StartChannelPolling(MonoBehaviour host)
+    {
+        host.StartCoroutine(PollChannelsLoop());
+    }
+
+    private static IEnumerator PollChannelsLoop()
+    {
+        // Short delay on startup — let the game settle and session config arrive first
+        yield return new WaitForSeconds(15f);
+
+        while (true)
+        {
+            string url = GRDNConnectBehaviour.ActiveBotUrl?.TrimEnd('/');
+            if (!string.IsNullOrEmpty(url))
+            {
+                using (var req = new UnityWebRequest(url + "/radio-channels", "GET"))
+                {
+                    req.downloadHandler = new DownloadHandlerBuffer();
+                    string secret = GRDNConnectBehaviour.ActiveBotSecret;
+                    if (!string.IsNullOrEmpty(secret))
+                        req.SetRequestHeader("x-secret", secret);
+
+                    yield return req.SendWebRequest();
+
+                    if (req.error == null)
+                    {
+                        string json = req.downloadHandler.text;
+                        if (!string.IsNullOrEmpty(json))
+                        {
+                            int before = _sessionChannels.Count;
+                            UpdateChannelsFromJson(json);
+                            if (_sessionChannels.Count != before)
+                                Main.ModEntry.Logger.Log(
+                                    $"[GRDNConnect] Channel poll: {_sessionChannels.Count} channel(s) (was {before})");
+                        }
+                    }
+                }
+            }
+            yield return new WaitForSeconds(60f);
+        }
+    }
+
     // ── Steam identity ────────────────────────────────────────────────────────
     // Returns the local player's Steam ID64 and display name.
     // Requires STEAM_API compile flag (Facepunch.Steamworks.Win64.dll in lib/).
@@ -366,7 +433,7 @@ public class GRDNRadioState : AStateBehaviour
         List<(string name, string vcId)> channels, int idx, bool sent, bool browsing)
     {
         if (sent)       return "Switching...";
-        if (!browsing)  return "";                          // idle — header "GRDN RADIO" is enough
+        if (!browsing)  return channels.Count > 0 ? $"{channels.Count} ch. ready" : "No channels";
         if (channels.Count == 0) return "No channels";
         return $"{idx + 1}/{channels.Count}  {channels[idx].name}";
     }
@@ -433,5 +500,6 @@ public static class RadioIntegration
     internal static string GetPlayerTrainNumber() => null;
     internal static string Esc(string s) => s ?? "";
     internal static (ulong id, string name) GetLocalSteamInfo() => (0, "");
+    internal static void StartChannelPolling(UnityEngine.MonoBehaviour host) { }
 }
 #endif

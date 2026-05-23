@@ -53,6 +53,10 @@ public class GRDNConnectBehaviour : MonoBehaviour
 		// CommsRadioAPI.dll is present in lib/ at build time.
 #if COMMS_RADIO_API
 		RadioIntegration.TryInit(this);
+		// Poll the bot for the live channel list every 60 s.
+		// Works for clients joining after /session start — they never receive
+		// the bot's push, but they do have BotPushUrl in their UMM settings.
+		RadioIntegration.StartChannelPolling(this);
 #endif
 	}
 

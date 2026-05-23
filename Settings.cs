@@ -22,6 +22,9 @@ public class Settings : UnityModManager.ModSettings, IDrawable
     [Draw("Bot Secret — auto-set by /session start; only needed here as a manual fallback")]
     public string BotSecret = "";
 
+    [Draw("Realistic Radio — require being in a loco to switch Discord voice channels (default: off)")]
+    public bool RealisticRadio = false;
+
     // JSON array of radio channels — maps channel name to Discord VC ID.
     // Format: [{"name":"Main Line","vcId":"123456789"},{"name":"Harbor","vcId":"987654321"}]
     // Copy the VC ID by right-clicking the voice channel → Copy Channel ID in Discord.
