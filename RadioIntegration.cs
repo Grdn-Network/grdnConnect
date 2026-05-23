@@ -84,20 +84,15 @@ public static class RadioIntegration
         {
             try
             {
-                // GRDN Radio — cycle Discord voice channels (only when channels are configured)
-                if (channels.Count > 0)
-                {
-                    CommsRadioMode.Create(
-                        new GRDNRadioState(channels, OnChannelSelected),
-                        Color.white,
-                        null
-                    );
-                    Main.ModEntry.Logger.Log($"[GRDNConnect] Radio mode registered — {channels.Count} channel(s).");
-                }
-                else
-                {
-                    Main.ModEntry.Logger.Log("[GRDNConnect] No radio channels configured — GRDN RADIO skipped.");
-                }
+                // GRDN Radio — always registered. Shows "No channels" until the bot
+                // pushes session-config; OnAction reads ActiveChannels live so channels
+                // appear as soon as /session start runs, without a game restart.
+                CommsRadioMode.Create(
+                    new GRDNRadioState(channels, OnChannelSelected),
+                    Color.white,
+                    null
+                );
+                Main.ModEntry.Logger.Log($"[GRDNConnect] Radio mode registered — {channels.Count} channel(s) at load time.");
 
                 // GRDN Crew — in-game loco assignment (always registered, no channels needed)
                 CommsRadioMode.Create(
@@ -313,7 +308,7 @@ public class GRDNRadioState : AStateBehaviour
             (!sent && channels.Count > 0) ? "SWITCH" : "",
             LCDArrowState.Off,
             LEDState.Off,
-            (!sent && channels.Count > 0) ? ButtonBehaviourType.Override : ButtonBehaviourType.Ignore))
+            (!sent && channels.Count > 0) ? ButtonBehaviourType.Override : ButtonBehaviourType.Regular))
     {
         _channels   = channels;
         _onSelected = onSelected;

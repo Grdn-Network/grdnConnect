@@ -70,7 +70,7 @@ public class GRDNCrewState : AStateBehaviour
             (!sent && target.num != null) ? "ASSIGN" : "",
             LCDArrowState.Off,
             LEDState.Off,
-            (!sent && target.num != null) ? ButtonBehaviourType.Override : ButtonBehaviourType.Ignore))
+            (!sent && target.num != null) ? ButtonBehaviourType.Override : ButtonBehaviourType.Regular))
     {
         _host        = host;
         _trainNumber = target.num;
