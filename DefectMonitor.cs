@@ -120,7 +120,7 @@ public class DefectMonitor : MonoBehaviour
             {
                 for (int i = 0; i < bogies.Length; i++)
                 {
-                    var wsCtrl = bogies[i]?.GetComponentInChildren<WheelslipController>();
+                    var wsCtrl = bogies[i] == null ? null : GetComponentInChildrenByTypeName(bogies[i], "WheelslipController");
                     if (wsCtrl == null) continue;
                     bool hot = GetBool(wsCtrl, bf,
                         "IsOverheated", "isOverheated", "WheelsOverheated",
@@ -135,7 +135,7 @@ public class DefectMonitor : MonoBehaviour
         // Fallback: check DamagableTrainCar for wheel-bearing-specific damage
         try
         {
-            var dmg = loco.GetComponent<DamagableTrainCar>();
+            var dmg = GetComponentByTypeName(loco, "DamagableTrainCar");
             if (dmg != null)
             {
                 float wheelDmg = GetFloat(dmg, bf,
@@ -150,7 +150,8 @@ public class DefectMonitor : MonoBehaviour
         // A brake pipe pressure anomaly on a coupled train suggests an air hose issue.
         try
         {
-            var brakes = loco.brakeSystem;
+            // Access via reflection — avoids hard dependency on DV.BrakeSystem.dll
+            object brakes = GetMemberValue(loco, bf, "brakeSystem");
             if (brakes != null && (loco.trainset?.cars?.Count ?? 1) > 1)
             {
                 float pipePsi = GetFloat(brakes, bf,
@@ -173,7 +174,7 @@ public class DefectMonitor : MonoBehaviour
                 foreach (var car in loco.trainset.cars)
                 {
                     if (car == null) continue;
-                    var dmg = car.GetComponent<DamagableTrainCar>();
+                    var dmg = GetComponentByTypeName(car, "DamagableTrainCar");
                     if (dmg == null) continue;
 
                     float level = GetFloat(dmg, bf,
@@ -344,6 +345,52 @@ public class DefectMonitor : MonoBehaviour
             if (field != null) return Convert.ToSingle(field.GetValue(obj));
         }
         return 0f;
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════
+    // Reflection-based component lookup
+    // Avoids compile-time hard deps on DV.BrakeSystem.dll and wherever
+    // WheelslipController / DamagableTrainCar live in the game assemblies.
+    // ═════════════════════════════════════════════════════════════════════════
+
+    private static readonly Dictionary<string, Type> _typeCache = new Dictionary<string, Type>();
+
+    private static Type FindTypeByName(string name)
+    {
+        if (_typeCache.TryGetValue(name, out Type cached)) return cached;
+        foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+        {
+            try
+            {
+                var t = asm.GetType(name, false);
+                if (t != null) { _typeCache[name] = t; return t; }
+            }
+            catch { }
+        }
+        _typeCache[name] = null;
+        return null;
+    }
+
+    private static Component GetComponentByTypeName(Component host, string typeName)
+    {
+        var type = FindTypeByName(typeName);
+        return type != null ? host.GetComponent(type) : null;
+    }
+
+    private static Component GetComponentInChildrenByTypeName(Component host, string typeName)
+    {
+        var type = FindTypeByName(typeName);
+        return type != null ? host.GetComponentInChildren(type) : null;
+    }
+
+    /// <summary>Returns the value of a named property or field, or null if not found.</summary>
+    private static object GetMemberValue(object obj, BindingFlags bf, string name)
+    {
+        var t     = obj.GetType();
+        var prop  = t.GetProperty(name, bf);
+        if (prop  != null) return prop.GetValue(obj);
+        var field = t.GetField(name, bf);
+        return field?.GetValue(obj);
     }
 
     // ═════════════════════════════════════════════════════════════════════════
