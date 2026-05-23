@@ -61,8 +61,12 @@ public class DefectMonitor : MonoBehaviour
         {
             yield return new WaitForSeconds(DEFECT_POLL_SEC);
 
+            // Scan every poll — even without a session URL — so _fired stays
+            // current with pre-existing defects. That way, when a session starts
+            // and the URL becomes available, we don't flood the bot with alerts
+            // for airhoses/derails that were already present at load time.
             string pushUrl = GRDNConnectBehaviour.ActiveBotUrl?.TrimEnd('/');
-            if (string.IsNullOrEmpty(pushUrl)) continue;
+            bool   canPost = !string.IsNullOrEmpty(pushUrl);
 
             var allCars = UnityEngine.Object.FindObjectsOfType<TrainCar>();
             var nowFired = new HashSet<string>();
@@ -78,8 +82,15 @@ public class DefectMonitor : MonoBehaviour
                 {
                     nowFired.Add(defectKey);
 
-                    if (_fired.Contains(defectKey)) continue; // already alerted
+                    if (_fired.Contains(defectKey)) continue; // already known
                     _fired.Add(defectKey);
+
+                    if (!canPost)
+                    {
+                        // No session yet — track silently so it won't alert when session starts
+                        Main.ModEntry.Logger.Log($"[Defect] {defectKey} — pre-session, suppressed");
+                        continue;
+                    }
 
                     string msg = BuildDefectMessage(train, defectType, detail);
                     Main.ModEntry.Logger.Log($"[Defect] {defectKey} — alerting");
@@ -87,7 +98,7 @@ public class DefectMonitor : MonoBehaviour
                 }
             }
 
-            // Clear resolved defects so they can fire again if they recur
+            // Clear resolved defects so they can re-alert if they recur
             _fired.RemoveWhere(k => !nowFired.Contains(k));
         }
     }
