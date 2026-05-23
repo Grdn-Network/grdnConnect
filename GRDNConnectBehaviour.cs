@@ -64,7 +64,7 @@ public class GRDNConnectBehaviour : MonoBehaviour
 	/// Returns true if this game instance is the server host, or if DVMP is not loaded (singleplayer).
 	/// Uses reflection so GRDNConnect has zero compile-time dependency on dv-multiplayer.
 	/// </summary>
-	private bool IsHostOrSingleplayer()
+	internal static bool IsHostOrSingleplayer()
 	{
 		try
 		{
