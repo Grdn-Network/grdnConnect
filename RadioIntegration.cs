@@ -7,6 +7,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Reflection;
 using System.Text;
 using CommsRadioAPI;
 using DV;
@@ -354,23 +355,52 @@ public static class RadioIntegration
 
     // ── Steam identity ────────────────────────────────────────────────────────
     // Returns the local player's Steam ID64 and display name.
-    // Requires STEAM_API compile flag (Facepunch.Steamworks.Win64.dll in lib/).
-    // Returns (0, "") gracefully if Steam is not initialised or DLL absent.
+    // Uses reflection so no compile-time reference to Facepunch.Steamworks is
+    // needed — the DLL is always loaded by Derail Valley itself at runtime.
+    // Returns (0, "") gracefully if Steam is not initialised.
     internal static (ulong id, string name) GetLocalSteamInfo()
     {
-#if STEAM_API
         try
         {
-            if (!Steamworks.SteamClient.IsValid) return (0, "");
-            ulong  id   = Steamworks.SteamClient.SteamId.Value;
-            string name = Steamworks.SteamClient.Name ?? "";
-            return (id, name);
+            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                if (asm.GetName().Name.IndexOf("Steamworks", StringComparison.OrdinalIgnoreCase) < 0)
+                    continue;
+
+                var clientType = asm.GetType("Steamworks.SteamClient");
+                if (clientType == null) continue;
+
+                // IsValid check — bail early if Steam isn't running
+                var isValidProp = clientType.GetProperty("IsValid",
+                    BindingFlags.Public | BindingFlags.Static);
+                if (isValidProp == null || !(bool)isValidProp.GetValue(null))
+                    return (0, "");
+
+                // SteamId.Value (SteamId is a struct)
+                var steamIdProp = clientType.GetProperty("SteamId",
+                    BindingFlags.Public | BindingFlags.Static);
+                ulong id = 0;
+                if (steamIdProp != null)
+                {
+                    var steamIdObj = steamIdProp.GetValue(null);
+                    var valueProp  = steamIdObj?.GetType().GetProperty("Value",
+                        BindingFlags.Public | BindingFlags.Instance);
+                    if (valueProp != null)
+                        id = (ulong)valueProp.GetValue(steamIdObj);
+                }
+
+                // Name
+                var nameProp = clientType.GetProperty("Name",
+                    BindingFlags.Public | BindingFlags.Static);
+                string name = nameProp?.GetValue(null) as string ?? "";
+
+                return (id, name);
+            }
         }
         catch (Exception ex)
         {
             Main.ModEntry.Logger.Warning("[GRDNConnect] GetLocalSteamInfo: " + ex.Message);
         }
-#endif
         return (0, "");
     }
 }

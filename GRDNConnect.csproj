@@ -79,17 +79,8 @@
     </Reference>
   </ItemGroup>
 
-  <!-- Facepunch.Steamworks — optional compile dep. Already loaded by DV at runtime;
-       we reference it only for build-time type resolution. Define STEAM_API when
-       present so steam-identity code compiles in; omit gracefully otherwise. -->
-  <PropertyGroup Condition="Exists('$(MSBuildProjectDirectory)\lib\Facepunch.Steamworks.Win64.dll')">
-    <DefineConstants>$(DefineConstants);STEAM_API</DefineConstants>
-  </PropertyGroup>
-  <ItemGroup Condition="Exists('$(MSBuildProjectDirectory)\lib\Facepunch.Steamworks.Win64.dll')">
-    <Reference Include="Facepunch.Steamworks.Win64">
-      <HintPath>lib\Facepunch.Steamworks.Win64.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-  </ItemGroup>
+  <!-- Facepunch.Steamworks: NO compile-time reference needed.
+       Steam ID is obtained at runtime via reflection — the DLL is always
+       loaded by DV itself, so no lib/ copy is required. -->
 
 </Project>
