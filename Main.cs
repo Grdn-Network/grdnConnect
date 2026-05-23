@@ -20,9 +20,9 @@ public class Main
 		Object.DontDestroyOnLoad((Object)(object)_hostObject);
 		_hostObject.AddComponent<GRDNConnectBehaviour>();
 
-		// Hotbox / defect monitor — only active when BotPushUrl is configured
-		if (!string.IsNullOrEmpty(Settings.BotPushUrl))
-			_hostObject.AddComponent<DefectMonitor>();
+		// Hotbox / defect monitor — always active; skips pushes when no bot URL
+		// is available (URL is pushed by the bot on /session start, not at load time)
+		_hostObject.AddComponent<DefectMonitor>();
 
 		ModEntry.Logger.Log($"[GRDNConnect] Loaded. HTTP server starting on port {Settings.Port}.");
 		return true;

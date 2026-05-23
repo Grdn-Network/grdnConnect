@@ -145,8 +145,8 @@ public class GRDNCrewState : AStateBehaviour
     // ── HTTP push ─────────────────────────────────────────────────────────────
     private IEnumerator PostCrewAssign(string fromTrain, string toTrain, string locoType)
     {
-        string pushUrl = Main.Settings.BotPushUrl?.TrimEnd('/');
-        string secret  = Main.Settings.BotSecret ?? "";
+        string pushUrl = GRDNConnectBehaviour.ActiveBotUrl?.TrimEnd('/');
+        string secret  = GRDNConnectBehaviour.ActiveBotSecret ?? "";
 
         if (string.IsNullOrEmpty(pushUrl))
         {

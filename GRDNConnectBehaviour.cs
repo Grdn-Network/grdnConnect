@@ -14,6 +14,25 @@ public class GRDNConnectBehaviour : MonoBehaviour
 {
 	private HttpListener _listener;
 
+	// ── Session config — pushed by the bot on /session start ─────────────────
+	// Cleared to null on destroy so a fresh session always picks up new values.
+	private static string _sessionBotUrl    = null;
+	private static string _sessionBotSecret = null;
+
+	/// <summary>
+	/// The bot's base URL for this session.
+	/// Falls back to the UMM Settings value if no session handshake has run yet.
+	/// </summary>
+	internal static string ActiveBotUrl =>
+		!string.IsNullOrEmpty(_sessionBotUrl)    ? _sessionBotUrl    : Main.Settings.BotPushUrl;
+
+	/// <summary>
+	/// The bot's shared secret for this session.
+	/// Falls back to the UMM Settings value if no session handshake has run yet.
+	/// </summary>
+	internal static string ActiveBotSecret =>
+		!string.IsNullOrEmpty(_sessionBotSecret) ? _sessionBotSecret : Main.Settings.BotSecret;
+
 	private void Start()
 	{
 		int port = Main.Settings.Port;
@@ -182,6 +201,10 @@ public class GRDNConnectBehaviour : MonoBehaviour
 			else if (ctx.Request.HttpMethod == "POST" && text == "/complete-job")
 			{
 				HandleCompleteJob(ctx.Request, ctx.Response);
+			}
+			else if (ctx.Request.HttpMethod == "POST" && text == "/session-config")
+			{
+				HandleSessionConfig(ctx.Request, ctx.Response);
 			}
 			else
 			{
@@ -399,6 +422,31 @@ public class GRDNConnectBehaviour : MonoBehaviour
 		}
 		bool flag = JobCompletionHelper.TryCompleteJob(text);
 		SendJson(res, flag ? 200 : 404, "{\"ok\":" + (flag ? "true" : "false") + ",\"jobId\":\"" + Escape(text) + "\"}");
+	}
+
+	// ── POST /session-config ──────────────────────────────────────────────────
+	// Called by the bot when an ops session opens (/session start).
+	// Body: { "botUrl": "http://vps-ip:3000", "secret": "..." }
+	// Stores values in static fields so GRDNCrewMode and DefectMonitor
+	// always have the current bot address without any UMM settings entry.
+	private void HandleSessionConfig(HttpListenerRequest req, HttpListenerResponse res)
+	{
+		string json;
+		using (var sr = new StreamReader(req.InputStream, Encoding.UTF8))
+			json = sr.ReadToEnd();
+
+		string botUrl = ExtractJsonString(json, "botUrl");
+		string secret = ExtractJsonString(json, "secret");
+
+		if (!string.IsNullOrEmpty(botUrl))
+			_sessionBotUrl = botUrl.TrimEnd('/');
+		// Allow secret to be set to empty string to clear it
+		if (secret != null)
+			_sessionBotSecret = secret;
+
+		Main.ModEntry.Logger.Log(
+			$"[GRDNConnect] Session config received — url={_sessionBotUrl ?? "(unchanged)"}");
+		SendJson(res, 200, "{\"ok\":true}");
 	}
 
 	private void SendJson(HttpListenerResponse res, int code, string json)

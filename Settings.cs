@@ -16,10 +16,10 @@ public class Settings : UnityModManager.ModSettings, IDrawable
     // The bot matches players to Discord automatically via their in-game train
     // number — no per-player Discord ID needed. Set BotPushUrl/BotSecret once.
 
-    [Draw("Bot Push URL (e.g. http://your-vps:3000 or https://your.cloudflare.tunnel)")]
+    [Draw("Bot Push URL — auto-set by /session start; only needed here as a manual fallback")]
     public string BotPushUrl = "";
 
-    [Draw("Bot Secret (must match HTTP_SECRET in the bot's .env)")]
+    [Draw("Bot Secret — auto-set by /session start; only needed here as a manual fallback")]
     public string BotSecret = "";
 
     // JSON array of radio channels — maps channel name to Discord VC ID.

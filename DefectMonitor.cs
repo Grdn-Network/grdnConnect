@@ -61,7 +61,7 @@ public class DefectMonitor : MonoBehaviour
         {
             yield return new WaitForSeconds(DEFECT_POLL_SEC);
 
-            string pushUrl = Main.Settings.BotPushUrl?.TrimEnd('/');
+            string pushUrl = GRDNConnectBehaviour.ActiveBotUrl?.TrimEnd('/');
             if (string.IsNullOrEmpty(pushUrl)) continue;
 
             var allCars = UnityEngine.Object.FindObjectsOfType<TrainCar>();
@@ -207,7 +207,7 @@ public class DefectMonitor : MonoBehaviour
 
         while (true)
         {
-            string pushUrl = Main.Settings.BotPushUrl?.TrimEnd('/');
+            string pushUrl = GRDNConnectBehaviour.ActiveBotUrl?.TrimEnd('/');
             if (!string.IsNullOrEmpty(pushUrl))
             {
                 var allCars = UnityEngine.Object.FindObjectsOfType<TrainCar>();
@@ -288,7 +288,7 @@ public class DefectMonitor : MonoBehaviour
 
     private IEnumerator PostAlert(string pushUrl, string train, string defectType, string detail, string message)
     {
-        string secret = Main.Settings.BotSecret ?? "";
+        string secret = GRDNConnectBehaviour.ActiveBotSecret ?? "";
         string url    = pushUrl + "/defect-alert";
 
         var sb = new StringBuilder();
