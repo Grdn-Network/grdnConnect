@@ -411,7 +411,7 @@ public class GRDNRadioState : AStateBehaviour
             "GRDN RADIO",
             MakeContent(RadioIntegration.ActiveChannels, index, sent, browsing),
             GetLabel(sent, browsing, RadioIntegration.ActiveChannels.Count),
-            browsing ? LCDArrowState.UpDown : LCDArrowState.Off,
+            browsing ? LCDArrowState.Right : LCDArrowState.Off,
             LEDState.Off,
             (browsing && !sent) ? ButtonBehaviourType.Override : ButtonBehaviourType.Regular))
     {
