@@ -9,6 +9,7 @@ using System.Text;
 using DV.Logic.Job;
 using DV.ThingTypes;
 using UnityEngine;
+using UnityEngine.Networking;
 
 public class GRDNConnectBehaviour : MonoBehaviour
 {
@@ -44,13 +45,16 @@ public class GRDNConnectBehaviour : MonoBehaviour
 	{
 		StartListener(Main.Settings.Port);
 
+		// If we're a multiplayer client, auto-fetch session config (botUrl + secret)
+		// from the host's mod. Retries every 15 s until it succeeds so players who
+		// join mid-op or before /session start still get the config automatically.
+		StartCoroutine(FetchClientConfigLoop());
+
 		// Optional CommsRadioAPI integration — compiled and run only when
 		// CommsRadioAPI.dll is present in lib/ at build time.
 #if COMMS_RADIO_API
 		RadioIntegration.TryInit(this);
 		// Poll the bot for the live channel list every 60 s.
-		// Works for clients joining after /session start — they never receive
-		// the bot's push, but they do have BotPushUrl in their UMM settings.
 		RadioIntegration.StartChannelPolling(this);
 
 		// Verify Steam identity on startup — result is logged so you can confirm
@@ -235,7 +239,15 @@ public class GRDNConnectBehaviour : MonoBehaviour
 		string text = ctx.Request.Url.AbsolutePath.ToLower();
 		try
 		{
-			// Reject requests if this player is not the host/singleplayer.
+			// /client-config is served by everyone — clients query the HOST's port
+			// to auto-fetch botUrl + secret without any manual UMM settings entry.
+			if (ctx.Request.HttpMethod == "GET" && text == "/client-config")
+			{
+				HandleClientConfig(ctx.Response);
+				return;
+			}
+
+			// Reject all other requests if this player is not the host/singleplayer.
 			// Checked per-request so the state is current (not locked in at startup).
 			if (!IsHostOrSingleplayer())
 			{
@@ -557,6 +569,179 @@ public class GRDNConnectBehaviour : MonoBehaviour
 		Main.ModEntry.Logger.Log(
 			$"[GRDNConnect] Session config received — url={_sessionBotUrl ?? "(unchanged)"}");
 		SendJson(res, 200, "{\"ok\":true}");
+	}
+
+	// ── GET /client-config ───────────────────────────────────────────────────
+	// Served by the HOST's mod so clients can auto-fetch botUrl + secret.
+	// NOT behind the IsHostOrSingleplayer guard — that's the whole point.
+	// Returns null fields if no session has been started yet (client retries).
+	private void HandleClientConfig(HttpListenerResponse res)
+	{
+		string url    = _sessionBotUrl    ?? Main.Settings.BotPushUrl ?? "";
+		string secret = _sessionBotSecret ?? Main.Settings.BotSecret  ?? "";
+
+		if (string.IsNullOrEmpty(url))
+		{
+			// Host hasn't run /session start yet — tell clients to retry
+			SendJson(res, 200, "{\"botUrl\":null,\"secret\":null}");
+			return;
+		}
+
+		SendJson(res, 200,
+			$"{{\"botUrl\":\"{Escape(url)}\",\"secret\":\"{Escape(secret)}\"}}");
+	}
+
+	// ── Server IP discovery (for client auto-fetch) ───────────────────────────
+	// Tries to find the host's IP via reflection into dv-multiplayer / Mirror.
+	// Returns null if undeterminable — caller retries later.
+	private static string TryGetServerAddress()
+	{
+		try
+		{
+			const BindingFlags bf =
+				BindingFlags.Public | BindingFlags.NonPublic |
+				BindingFlags.Instance | BindingFlags.Static;
+
+			foreach (Assembly asm in AppDomain.CurrentDomain.GetAssemblies())
+			{
+				string asmName = asm.GetName().Name;
+
+				if (asmName.StartsWith("Multiplayer", StringComparison.OrdinalIgnoreCase))
+				{
+					// Approach A: Multiplayer.Multiplayer.Settings — has host IP the client typed in
+					Type mainType = asm.GetType("Multiplayer.Multiplayer");
+					object settings = mainType?.GetField("Settings", bf)?.GetValue(null);
+					if (settings != null)
+					{
+						Type st = settings.GetType();
+						foreach (var fn in new[] {
+							"ServerAddress", "ServerIp", "ServerIP", "IpAddress",
+							"Address", "Ip", "IP", "Host", "HostAddress",
+							"LastServerIp", "LastServerAddress", "RemoteEndPoint" })
+						{
+							string v = st.GetField(fn, bf)?.GetValue(settings)?.ToString()
+							        ?? st.GetProperty(fn, bf)?.GetValue(settings)?.ToString();
+							if (!string.IsNullOrEmpty(v) &&
+								v != "localhost" && v != "127.0.0.1") return v;
+						}
+					}
+
+					// Approach B: MultiplayerAPI.Instance — the public dv-multiplayer API
+					Type apiType = null;
+					try
+					{
+						foreach (Type t in asm.GetExportedTypes())
+							if (t.Name == "MultiplayerAPI") { apiType = t; break; }
+					}
+					catch { }
+
+					if (apiType != null)
+					{
+						object inst = apiType.GetProperty("Instance", bf)?.GetValue(null);
+						if (inst != null)
+						{
+							var it = inst.GetType();
+							foreach (var fn in new[] {
+								"ServerAddress", "NetworkAddress", "ServerIp",
+								"HostAddress", "ConnectionAddress" })
+							{
+								string v = it.GetProperty(fn, bf)?.GetValue(inst)?.ToString()
+								        ?? it.GetField(fn, bf)?.GetValue(inst)?.ToString();
+								if (!string.IsNullOrEmpty(v) &&
+									v != "localhost" && v != "127.0.0.1") return v;
+							}
+						}
+					}
+				}
+
+				// Approach C: Mirror.NetworkManager.singleton.networkAddress
+				if (asmName.Equals("Mirror", StringComparison.OrdinalIgnoreCase))
+				{
+					Type nmType = asm.GetType("Mirror.NetworkManager");
+					if (nmType != null)
+					{
+						object singleton = nmType.GetProperty("singleton", bf)?.GetValue(null);
+						if (singleton != null)
+						{
+							string v = nmType.GetField("networkAddress", bf)?.GetValue(singleton)?.ToString();
+							if (!string.IsNullOrEmpty(v) &&
+								v != "localhost" && v != "127.0.0.1") return v;
+						}
+					}
+				}
+			}
+		}
+		catch (Exception ex)
+		{
+			Main.ModEntry.Logger.Warning("[GRDNConnect] TryGetServerAddress: " + ex.Message);
+		}
+		return null;
+	}
+
+	// ── Auto-fetch client config loop ─────────────────────────────────────────
+	// Runs in the background for every player. Exits immediately if host or if
+	// config is already available. Otherwise queries host:port/client-config
+	// every 15 s until it gets a valid botUrl or gives up after ~10 minutes.
+	private IEnumerator FetchClientConfigLoop()
+	{
+		// Small delay — let the multiplayer session fully connect first
+		yield return new WaitForSeconds(8f);
+
+		for (int attempt = 0; attempt < 40; attempt++)
+		{
+			// Already have config (from UMM settings or a prior session push)
+			if (!string.IsNullOrEmpty(ActiveBotUrl)) yield break;
+
+			// We're hosting or in singleplayer — bot pushes to us directly, no need to fetch
+			if (IsHostOrSingleplayer()) yield break;
+
+			string serverIp = TryGetServerAddress();
+			if (!string.IsNullOrEmpty(serverIp))
+			{
+				string url = $"http://{serverIp}:{Main.Settings.Port}/client-config";
+				Main.ModEntry.Logger.Log($"[GRDNConnect] Client: fetching session config from host at {url}");
+
+				using (var req = UnityWebRequest.Get(url))
+				{
+					req.timeout = 5;
+					yield return req.SendWebRequest();
+
+					if (req.error == null)
+					{
+						string botUrl = ExtractJsonString(req.downloadHandler.text, "botUrl");
+						string secret = ExtractJsonString(req.downloadHandler.text, "secret");
+
+						if (!string.IsNullOrEmpty(botUrl))
+						{
+							_sessionBotUrl    = botUrl.TrimEnd('/');
+							if (secret != null) _sessionBotSecret = secret;
+							Main.ModEntry.Logger.Log(
+								$"[GRDNConnect] Client session config received — botUrl={_sessionBotUrl}");
+							yield break;  // success
+						}
+						// botUrl null = host hasn't started a session yet — keep retrying
+						Main.ModEntry.Logger.Log(
+							"[GRDNConnect] Host has no session config yet — retrying in 15 s");
+					}
+					else
+					{
+						Main.ModEntry.Logger.Warning(
+							$"[GRDNConnect] Client config fetch failed ({req.responseCode}): {req.error}");
+					}
+				}
+			}
+			else
+			{
+				Main.ModEntry.Logger.Warning(
+					"[GRDNConnect] Could not determine server address — retrying in 15 s");
+			}
+
+			yield return new WaitForSeconds(15f);
+		}
+
+		Main.ModEntry.Logger.Warning(
+			"[GRDNConnect] Client config auto-fetch gave up. " +
+			"Set BotPushUrl in UMM Settings as a manual fallback.");
 	}
 
 	private void SendJson(HttpListenerResponse res, int code, string json)
