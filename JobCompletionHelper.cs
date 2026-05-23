@@ -173,24 +173,63 @@ public static class JobCompletionHelper
 		try
 		{
 			var jobType = ((object)job).GetType();
+
+			// ── Primary: jobChainController — confirmed field name from DV internals ─
+			// It is a MonoBehaviour component, NOT a GameObject.
+			// Call the completion handler on it directly (same approach used by GetCarGuidsFromJob).
+			object jcc = jobType.GetField("jobChainController", bf)?.GetValue(job)
+			          ?? jobType.GetProperty("jobChainController", bf)?.GetValue(job);
+
+			if (jcc != null)
+			{
+				var jccType = jcc.GetType();
+				foreach (var methodName in new[] { "JobCompleted", "OnJobCompleted", "CompleteJob", "HandleJobCompletion", "AdvanceChain" })
+				{
+					var m = jccType.GetMethod(methodName, bf, null, new Type[] { jobType }, null)
+					     ?? jccType.GetMethod(methodName, bf, null, Type.EmptyTypes, null);
+					if (m == null) continue;
+
+					object[] args = m.GetParameters().Length > 0 ? new object[] { job } : null;
+					m.Invoke(jcc, args);
+					Main.ModEntry.Logger.Log($"[GRDNConnect] Chain advanced: {jccType.Name}.{methodName}({job.ID})");
+					return;
+				}
+				// Controller found but no method matched — continue to GO fallback
+				Main.ModEntry.Logger.Warning($"[GRDNConnect] Chain advance: {jcc.GetType().Name} found but no handler method matched for {job.ID}");
+			}
+
+			// ── Fallback: get the chain GameObject and walk its components ────────────
+			// Handles the case where jcc was found but had no matching method (walks siblings),
+			// and any future variant where the controller is stored as a GO reference.
 			GameObject chainGO = null;
 
-			// Try common field/property names for the chain controller GO
-			foreach (var name in new[] { "jobChainGO", "chainGO", "chainController", "chainGameObject" })
+			// If jcc is a MonoBehaviour, its gameObject may host sibling controllers
+			if (jcc is MonoBehaviour jccMb && jccMb != null)
+				chainGO = jccMb.gameObject;
+
+			// Also try any remaining GO/MB field name variants
+			if (chainGO == null)
 			{
-				var f = jobType.GetField(name, bf);
-				if (f?.GetValue(job) is GameObject go1 && go1 != null) { chainGO = go1; break; }
-				var p = jobType.GetProperty(name, bf);
-				if (p?.GetValue(job) is GameObject go2 && go2 != null) { chainGO = go2; break; }
+				foreach (var name in new[] { "jobChainGO", "chainGO", "chainGameObject" })
+				{
+					var f   = jobType.GetField(name, bf);
+					object fval = f?.GetValue(job);
+					if (fval is GameObject go1 && go1 != null) { chainGO = go1; break; }
+					if (fval is MonoBehaviour mb1 && mb1 != null) { chainGO = mb1.gameObject; break; }
+
+					var p   = jobType.GetProperty(name, bf);
+					object pval = p?.GetValue(job);
+					if (pval is GameObject go2 && go2 != null) { chainGO = go2; break; }
+					if (pval is MonoBehaviour mb2 && mb2 != null) { chainGO = mb2.gameObject; break; }
+				}
 			}
 
 			if (chainGO == null)
 			{
-				Main.ModEntry.Logger.Warning($"[GRDNConnect] Chain advance: no chainGO found on {job.ID}");
+				Main.ModEntry.Logger.Warning($"[GRDNConnect] Chain advance: no chain controller or chainGO found on {job.ID}");
 				return;
 			}
 
-			// Walk every MonoBehaviour on the chain GO; call the first matching completion handler
 			foreach (var comp in chainGO.GetComponents<MonoBehaviour>())
 			{
 				if (comp == null) continue;
@@ -198,15 +237,13 @@ public static class JobCompletionHelper
 
 				foreach (var methodName in new[] { "JobCompleted", "OnJobCompleted", "CompleteJob", "HandleJobCompletion", "AdvanceChain" })
 				{
-					// Try overload that takes a Job first, then parameterless
-					var jobT = ((object)job).GetType();
-					var m = t.GetMethod(methodName, bf, null, new Type[] { jobT }, null)
+					var m = t.GetMethod(methodName, bf, null, new Type[] { jobType }, null)
 					     ?? t.GetMethod(methodName, bf, null, Type.EmptyTypes, null);
 					if (m == null) continue;
 
 					object[] args = m.GetParameters().Length > 0 ? new object[] { job } : null;
 					m.Invoke(comp, args);
-					Main.ModEntry.Logger.Log($"[GRDNConnect] Chain advanced: {t.Name}.{methodName}({job.ID})");
+					Main.ModEntry.Logger.Log($"[GRDNConnect] Chain advanced (GO scan): {t.Name}.{methodName}({job.ID})");
 					return;
 				}
 			}
