@@ -7,7 +7,7 @@
     "GameVersion": "1.0",
     "AssemblyName": "GRDNConnect.dll",
     "EntryMethod": "Main.Load",
-    "Requirements": [],
+    "Requirements": ["CommsRadioAPI"],
     "LoadAfter": [ "DVMultiplayer" ],
     "Description": "Exposes a local HTTP API for the GRDN Operations Discord bot. Serves job data, server info, and job completion endpoints. Works in singleplayer and as the host in DVMultiplayer sessions (non-hosts receive 403). Detects DVMultiplayer at runtime via reflection — no hard dependency."
 }
