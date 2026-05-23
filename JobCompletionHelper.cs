@@ -34,6 +34,7 @@ public static class JobCompletionHelper
 				if ((int)val == 2)
 				{
 					Pay(wage, jobId);
+					TryAdvanceJobChain(currentJob);
 					return (true, null);
 				}
 
@@ -45,6 +46,7 @@ public static class JobCompletionHelper
 					if (TryForceCompleteRelaxed(instance, currentJob))
 					{
 						Pay(wage, jobId);
+						TryAdvanceJobChain(currentJob);
 						return (true, null);
 					}
 					return (false, "Cars are not yet at the destination track (relaxed completion also failed)");
@@ -150,6 +152,70 @@ public static class JobCompletionHelper
 			          ?? t.GetProperty("tasks", bf)?.GetValue(task);
 			if (sub is System.Collections.IEnumerable subTasks)
 				CollectCarMoves(subTasks, bf, moves);
+		}
+	}
+
+	/// <summary>
+	/// Advances the job chain after a successful completion.
+	/// Reflects into the job's chain GameObject, finds the chain controller component,
+	/// and calls its job-completed handler — which activates the next job in the chain
+	/// (e.g. ShuntingUnload that follows a Transport).
+	/// Safe to call even if TryToCompleteAJob already fired state-change events,
+	/// because if the chain was already advanced the next job will already be active
+	/// and the call will be a no-op or log a warning via DV's own guard.
+	/// </summary>
+	private static void TryAdvanceJobChain(Job job)
+	{
+		const System.Reflection.BindingFlags bf =
+			System.Reflection.BindingFlags.Public    | System.Reflection.BindingFlags.NonPublic  |
+			System.Reflection.BindingFlags.Instance  | System.Reflection.BindingFlags.FlattenHierarchy;
+
+		try
+		{
+			var jobType = ((object)job).GetType();
+			GameObject chainGO = null;
+
+			// Try common field/property names for the chain controller GO
+			foreach (var name in new[] { "jobChainGO", "chainGO", "chainController", "chainGameObject" })
+			{
+				var f = jobType.GetField(name, bf);
+				if (f?.GetValue(job) is GameObject go1 && go1 != null) { chainGO = go1; break; }
+				var p = jobType.GetProperty(name, bf);
+				if (p?.GetValue(job) is GameObject go2 && go2 != null) { chainGO = go2; break; }
+			}
+
+			if (chainGO == null)
+			{
+				Main.ModEntry.Logger.Warning($"[GRDNConnect] Chain advance: no chainGO found on {job.ID}");
+				return;
+			}
+
+			// Walk every MonoBehaviour on the chain GO; call the first matching completion handler
+			foreach (var comp in chainGO.GetComponents<MonoBehaviour>())
+			{
+				if (comp == null) continue;
+				var t = comp.GetType();
+
+				foreach (var methodName in new[] { "JobCompleted", "OnJobCompleted", "CompleteJob", "HandleJobCompletion", "AdvanceChain" })
+				{
+					// Try overload that takes a Job first, then parameterless
+					var jobT = ((object)job).GetType();
+					var m = t.GetMethod(methodName, bf, null, new Type[] { jobT }, null)
+					     ?? t.GetMethod(methodName, bf, null, Type.EmptyTypes, null);
+					if (m == null) continue;
+
+					object[] args = m.GetParameters().Length > 0 ? new object[] { job } : null;
+					m.Invoke(comp, args);
+					Main.ModEntry.Logger.Log($"[GRDNConnect] Chain advanced: {t.Name}.{methodName}({job.ID})");
+					return;
+				}
+			}
+
+			Main.ModEntry.Logger.Warning($"[GRDNConnect] Chain advance: no handler method found for {job.ID}");
+		}
+		catch (Exception ex)
+		{
+			Main.ModEntry.Logger.Warning($"[GRDNConnect] TryAdvanceJobChain: {ex.Message}");
 		}
 	}
 
