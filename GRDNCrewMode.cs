@@ -132,7 +132,7 @@ public class GRDNCrewState : AStateBehaviour
 
             yield return req.SendWebRequest();
 
-            if (req.result == UnityWebRequest.Result.Success)
+            if (req.error == null)
                 Main.ModEntry.Logger.Log($"[CrewMode] Re-assigned {fromTrain} → {toTrain}");
             else
                 Main.ModEntry.Logger.Warning($"[CrewMode] Update failed ({req.responseCode}): {req.error}");

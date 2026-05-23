@@ -110,7 +110,7 @@ public static class RadioIntegration
 
             yield return req.SendWebRequest();
 
-            if (req.result == UnityWebRequest.Result.Success)
+            if (req.error == null)
                 Main.ModEntry.Logger.Log($"[GRDNConnect] Radio push OK → vcId={vcId}");
             else
                 Main.ModEntry.Logger.Warning($"[GRDNConnect] Radio push failed ({req.responseCode}): {req.error}");

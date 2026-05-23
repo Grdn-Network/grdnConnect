@@ -312,7 +312,7 @@ public class DefectMonitor : MonoBehaviour
 
             yield return req.SendWebRequest();
 
-            if (req.result != UnityWebRequest.Result.Success)
+            if (req.error != null)
                 Main.ModEntry.Logger.Warning($"[Defect] Push failed: {req.error}");
         }
     }
