@@ -358,6 +358,9 @@ public static class RadioIntegration
     // Uses reflection so no compile-time reference to Facepunch.Steamworks is
     // needed — the DLL is always loaded by Derail Valley itself at runtime.
     // Returns (0, "") gracefully if Steam is not initialised.
+    //
+    // KEY: In Facepunch.Steamworks, SteamId.Value is a PUBLIC FIELD, not a
+    // property. GetProperty("Value") silently returns null. We try GetField first.
     internal static (ulong id, string name) GetLocalSteamInfo()
     {
         try
@@ -370,29 +373,52 @@ public static class RadioIntegration
                 var clientType = asm.GetType("Steamworks.SteamClient");
                 if (clientType == null) continue;
 
-                // IsValid check — bail early if Steam isn't running
+                // IsValid — only bail if it's explicitly false.
+                // If the property doesn't exist in this version, continue anyway.
                 var isValidProp = clientType.GetProperty("IsValid",
                     BindingFlags.Public | BindingFlags.Static);
-                if (isValidProp == null || !(bool)isValidProp.GetValue(null))
+                if (isValidProp != null && !(bool)isValidProp.GetValue(null))
                     return (0, "");
 
-                // SteamId.Value (SteamId is a struct)
-                var steamIdProp = clientType.GetProperty("SteamId",
-                    BindingFlags.Public | BindingFlags.Static);
+                // SteamId — try both common property names used across versions
                 ulong id = 0;
-                if (steamIdProp != null)
+                foreach (var idPropName in new[] { "SteamId", "SteamID" })
                 {
+                    var steamIdProp = clientType.GetProperty(idPropName,
+                        BindingFlags.Public | BindingFlags.Static);
+                    if (steamIdProp == null) continue;
+
                     var steamIdObj = steamIdProp.GetValue(null);
-                    var valueProp  = steamIdObj?.GetType().GetProperty("Value",
-                        BindingFlags.Public | BindingFlags.Instance);
-                    if (valueProp != null)
-                        id = (ulong)valueProp.GetValue(steamIdObj);
+                    if (steamIdObj == null) continue;
+
+                    var t = steamIdObj.GetType();
+
+                    // Facepunch.Steamworks declares SteamId.Value as a public field,
+                    // not a property — GetProperty("Value") will silently return null.
+                    // Try field first, then property as a fallback for other bindings.
+                    var valueField = t.GetField("Value", BindingFlags.Public | BindingFlags.Instance);
+                    if (valueField != null)
+                        id = (ulong)valueField.GetValue(steamIdObj);
+
+                    if (id == 0)
+                    {
+                        var valueProp = t.GetProperty("Value", BindingFlags.Public | BindingFlags.Instance);
+                        if (valueProp != null)
+                            id = (ulong)valueProp.GetValue(steamIdObj);
+                    }
+
+                    if (id > 0) break;
                 }
 
                 // Name
                 var nameProp = clientType.GetProperty("Name",
                     BindingFlags.Public | BindingFlags.Static);
                 string name = nameProp?.GetValue(null) as string ?? "";
+
+                if (id == 0)
+                    Main.ModEntry.Logger.Warning(
+                        "[GRDNConnect] GetLocalSteamInfo: Steamworks found but Steam ID is 0 — " +
+                        "Steam may not be fully initialised yet. Radio push will require a train number.");
 
                 return (id, name);
             }
@@ -401,6 +427,8 @@ public static class RadioIntegration
         {
             Main.ModEntry.Logger.Warning("[GRDNConnect] GetLocalSteamInfo: " + ex.Message);
         }
+
+        Main.ModEntry.Logger.Warning("[GRDNConnect] GetLocalSteamInfo: no Steamworks assembly found in AppDomain.");
         return (0, "");
     }
 }

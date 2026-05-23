@@ -52,6 +52,13 @@ public class GRDNConnectBehaviour : MonoBehaviour
 		// Works for clients joining after /session start — they never receive
 		// the bot's push, but they do have BotPushUrl in their UMM settings.
 		RadioIntegration.StartChannelPolling(this);
+
+		// Verify Steam identity on startup — result is logged so you can confirm
+		// radio pushes will carry a Steam ID without needing to trigger a swap first.
+		var (steamId, steamName) = RadioIntegration.GetLocalSteamInfo();
+		if (steamId > 0)
+			Main.ModEntry.Logger.Log($"[GRDNConnect] Steam identity OK — id={steamId} name={steamName}");
+		// Warning already printed inside GetLocalSteamInfo() if steamId == 0.
 #endif
 	}
 
