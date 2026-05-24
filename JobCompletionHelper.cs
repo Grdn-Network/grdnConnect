@@ -10,9 +10,9 @@ public static class JobCompletionHelper
 {
 	/// <summary>
 	/// Attempts to complete a job by ID.
-	/// Returns (true, null) on success, or (false, reason) on failure.
+	/// Returns (true, null, wage) on success, or (false, reason, 0f) on failure.
 	/// </summary>
-	public static (bool ok, string error) TryCompleteJob(string jobId)
+	public static (bool ok, string error, float wage) TryCompleteJob(string jobId)
 	{
 		try
 		{
@@ -20,7 +20,7 @@ public static class JobCompletionHelper
 			if ((UnityEngine.Object)(object)instance == (UnityEngine.Object)null)
 			{
 				Debug.LogError((object)"[GRDNConnect] JobsManager.Instance is null.");
-				return (false, "JobsManager is not available — is the game in a loaded save?");
+				return (false, "JobsManager is not available — is the game in a loaded save?", 0f);
 			}
 
 			foreach (Job currentJob in instance.currentJobs)
@@ -35,7 +35,7 @@ public static class JobCompletionHelper
 				{
 					Pay(wage, jobId);
 					TryAdvanceJobChain(currentJob);
-					return (true, null);
+					return (true, null, wage);
 				}
 
 				// Relaxed completion: re-attempt after moving cars to destination tracks.
@@ -47,25 +47,25 @@ public static class JobCompletionHelper
 					{
 						Pay(wage, jobId);
 						TryAdvanceJobChain(currentJob);
-						return (true, null);
+						return (true, null, wage);
 					}
-					return (false, "Cars are not yet at the destination track (relaxed completion also failed)");
+					return (false, "Cars are not yet at the destination track (relaxed completion also failed)", 0f);
 				}
 
 				Debug.LogWarning((object)$"[GRDNConnect] TryToCompleteAJob returned {val} for {jobId}.");
 				string reason = (int)val == 1
 					? "Cars are not yet spotted to the required destination track"
 					: $"Job validator returned state '{val}' — cars may not be in the correct position";
-				return (false, reason);
+				return (false, reason, 0f);
 			}
 
 			Debug.LogWarning((object)("[GRDNConnect] Job not found: " + jobId));
-			return (false, "Job not found — it may already be completed, expired, or the ID is wrong");
+			return (false, "Job not found — it may already be completed, expired, or the ID is wrong", 0f);
 		}
 		catch (Exception ex)
 		{
 			Debug.LogError((object)("[GRDNConnect] TryCompleteJob threw: " + ex.Message));
-			return (false, ex.Message);
+			return (false, ex.Message, 0f);
 		}
 	}
 

@@ -24,6 +24,10 @@ public class Main
 		// is available (URL is pushed by the bot on /session start, not at load time)
 		_hostObject.AddComponent<DefectMonitor>();
 
+		// Car-miles stats tracker — polls every 5 s, flushes to bot every 60 s.
+		// Host-only; exits silently when no bot URL is available.
+		_hostObject.AddComponent<StatsTracker>();
+
 		ModEntry.Logger.Log($"[GRDNConnect] Loaded. HTTP server starting on port {Settings.Port}.");
 		return true;
 	}

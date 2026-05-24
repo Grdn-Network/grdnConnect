@@ -503,15 +503,56 @@ public class GRDNConnectBehaviour : MonoBehaviour
 		{
 			json = streamReader.ReadToEnd();
 		}
-		string text = ExtractJsonString(json, "jobId");
-		if (string.IsNullOrEmpty(text))
+		string jobId = ExtractJsonString(json, "jobId");
+		if (string.IsNullOrEmpty(jobId))
 		{
 			SendJson(res, 400, "{\"ok\":false,\"error\":\"Missing jobId\"}");
 			return;
 		}
-		var (ok, error) = JobCompletionHelper.TryCompleteJob(text);
-		string errorField = !string.IsNullOrEmpty(error) ? $",\"error\":\"{Escape(error)}\"" : "";
-		SendJson(res, ok ? 200 : 404, $"{{\"ok\":{(ok ? "true" : "false")},\"jobId\":\"{Escape(text)}\"{errorField}}}");
+
+		// Gather job details BEFORE completion — TryCompleteJob removes the job from
+		// currentJobs on success so we can't read them afterwards.
+		string jobType = null, departure = null, destination = null, cargo = null;
+		int carCount = 0;
+		try
+		{
+			var jobs = JobCompletionHelper.GetCurrentJobsForApi();
+			if (jobs != null)
+			{
+				foreach (var job in jobs)
+				{
+					if (job.ID != jobId) continue;
+					jobType = ((object)job.jobType).ToString();
+					departure   = GetChainDataField(job, "chainOriginYardId");
+					destination = GetChainDataField(job, "chainDestinationYardId");
+					carCount    = GetCarGuidsFromJob(job).Count();
+					cargo       = GetJobCargoType(job);
+					break;
+				}
+			}
+		}
+		catch { }
+
+		var (ok, error, wage) = JobCompletionHelper.TryCompleteJob(jobId);
+
+		var sb = new StringBuilder();
+		sb.Append("{");
+		sb.Append($"\"ok\":{(ok ? "true" : "false")}");
+		sb.Append($",\"jobId\":\"{Escape(jobId)}\"");
+		if (!string.IsNullOrEmpty(error))
+			sb.Append($",\"error\":\"{Escape(error)}\"");
+		if (ok)
+		{
+			string wageStr = wage.ToString(System.Globalization.CultureInfo.InvariantCulture);
+			sb.Append($",\"jobType\":\"{Escape(jobType ?? "")}\"");
+			sb.Append($",\"departure\":\"{Escape(departure ?? "")}\"");
+			sb.Append($",\"destination\":\"{Escape(destination ?? "")}\"");
+			sb.Append($",\"carCount\":{carCount}");
+			sb.Append($",\"cargo\":\"{Escape(cargo ?? "")}\"");
+			sb.Append($",\"wage\":{wageStr}");
+		}
+		sb.Append("}");
+		SendJson(res, ok ? 200 : 404, sb.ToString());
 	}
 
 	// ── GET /debug-boturl ────────────────────────────────────────────────────
