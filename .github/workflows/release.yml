@@ -48,6 +48,18 @@ jobs:
           }
           Write-Host "lib\CommsRadioAPI.dll is ready — COMMS_RADIO_API will be defined"
 
+      - name: Patch Info.json version
+        shell: pwsh
+        run: |
+          # Strip the leading 'v' from the tag  (v1.2.3 → 1.2.3)
+          $version = "${{ github.ref_name }}".TrimStart('v')
+          Write-Host "Stamping Info.json with version $version"
+          $text = Get-Content Info.json -Raw
+          # Simple regex replace — avoids ConvertFrom-Json mangling special characters
+          $text = $text -replace '"Version"\s*:\s*"[^"]*"', ('"Version": "' + $version + '"')
+          Set-Content Info.json $text -Encoding utf8NoBOM
+          Write-Host "Done — Info.json now contains: $(Select-String 'Version' Info.json)"
+
       - name: Restore NuGet packages
         run: dotnet restore GRDNConnect.csproj
 
