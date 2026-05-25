@@ -283,13 +283,32 @@ public class GRDNCrewState : AStateBehaviour
 
         try
         {
-            // Aggregate world-space bounds across all car renderers
-            var renderers = car.GetComponentsInChildren<MeshRenderer>();
-            if (renderers.Length == 0) return;
+            // Non-trigger BoxColliders give a tight car-body bound.
+            // MeshRenderers include interior cab geometry, LOD shadow meshes, etc.
+            // and produce a box far larger than the visible hull.
+            var allColliders = car.GetComponentsInChildren<BoxCollider>();
+            Bounds? nullableBounds = null;
+            foreach (var c in allColliders)
+            {
+                if (c.isTrigger) continue;
+                if (nullableBounds == null) { nullableBounds = c.bounds; }
+                else { var b = nullableBounds.Value; b.Encapsulate(c.bounds); nullableBounds = b; }
+            }
 
-            Bounds bounds = renderers[0].bounds;
-            for (int i = 1; i < renderers.Length; i++)
-                bounds.Encapsulate(renderers[i].bounds);
+            Bounds bounds;
+            if (nullableBounds != null)
+            {
+                bounds = nullableBounds.Value;
+            }
+            else
+            {
+                // Fallback: aggregate renderer bounds (original behaviour)
+                var renderers = car.GetComponentsInChildren<MeshRenderer>();
+                if (renderers.Length == 0) return;
+                bounds = renderers[0].bounds;
+                for (int i = 1; i < renderers.Length; i++)
+                    bounds.Encapsulate(renderers[i].bounds);
+            }
 
             // Spawn a plain cube at the bounds center — no collider needed
             _highlightBox = GameObject.CreatePrimitive(PrimitiveType.Cube);
