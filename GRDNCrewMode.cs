@@ -61,6 +61,15 @@ public class GRDNCrewState : AStateBehaviour
     // Persists for the life of the game session.
     private static string _lastRegisteredTrain = null;
 
+    // ── Selection-box highlight ────────────────────────────────────────────────
+    // A separate cube GameObject sized to the targeted loco's bounds — exactly
+    // how the vanilla Clear comms radio mode shows its cyan selection box.
+    // The VanillaMaterial.Valid material is designed for this cube, NOT for the
+    // car's own MeshRenderers (applying it there tints the entire viewport).
+    private static TrainCar    _lastScannedCar  = null; // side effect of ScanTarget
+    private static TrainCar    _highlightedCar  = null; // which car the box currently shows
+    private static GameObject  _highlightBox    = null; // active cube, or null
+
     private const float RAYCAST_RANGE = 100f;
 
     // ── Entry point — called when this mode is first constructed ──────────────
@@ -102,6 +111,12 @@ public class GRDNCrewState : AStateBehaviour
 
         // Idle: rescan each frame for a target change
         var target = ScanTarget(utility.SignalOrigin);
+        var newCar = _lastScannedCar; // set as side effect of ScanTarget
+
+        // Rebuild selection box only when targeted car changes
+        if (newCar != _highlightedCar)
+            UpdateHighlightBox(utility, newCar);
+
         if (target.num == _trainNumber && target.type == _locoType)
             return this;
 
@@ -116,19 +131,27 @@ public class GRDNCrewState : AStateBehaviour
             // Up / Down — always rescan, clears any result or pending state
             case InputAction.Up:
             case InputAction.Down:
+                ClearHighlightBox();
                 return new GRDNCrewState(_host, ScanTarget(utility.SignalOrigin), Disp.Idle);
 
             case InputAction.Activate:
                 // Non-idle: treat as rescan
                 if (_disp != Disp.Idle)
+                {
+                    ClearHighlightBox();
                     return new GRDNCrewState(_host, ScanTarget(utility.SignalOrigin), Disp.Idle);
+                }
 
                 // Nothing targeted — fresh scan
                 if (_trainNumber == null)
+                {
+                    ClearHighlightBox();
                     return new GRDNCrewState(_host, ScanTarget(utility.SignalOrigin), Disp.Idle);
+                }
 
                 string fromTrain = _lastRegisteredTrain ?? _trainNumber;
                 _crewResult = Disp.Idle; // clear previous result before firing
+                ClearHighlightBox();      // entering Pending — hide the box
                 _host.StartCoroutine(PostCrewAssign(fromTrain, _trainNumber, _locoType));
                 return new GRDNCrewState(_host, (_trainNumber, _locoType), Disp.Pending);
 
@@ -166,17 +189,18 @@ public class GRDNCrewState : AStateBehaviour
             else
             {
                 var cam = Camera.main;
-                if (cam == null) return (null, null);
+                if (cam == null) { _lastScannedCar = null; return (null, null); }
                 pos = cam.transform.position;
                 dir = cam.transform.forward;
             }
 
             if (!Physics.Raycast(pos, dir, out RaycastHit hit, RAYCAST_RANGE))
-                return (null, null);
+            { _lastScannedCar = null; return (null, null); }
 
             var car = hit.transform.GetComponentInParent<TrainCar>();
-            if (car == null || !car.IsLoco) return (null, null);
+            if (car == null || !car.IsLoco) { _lastScannedCar = null; return (null, null); }
 
+            _lastScannedCar = car;
             var match  = Regex.Match(car.ID ?? "", @"(\d+)$");
             string num = match.Success ? match.Groups[1].Value : car.ID;
             string type = RadioIntegration.MapCarType(((object)car.carType).ToString());
@@ -186,6 +210,7 @@ public class GRDNCrewState : AStateBehaviour
         catch (Exception ex)
         {
             Main.ModEntry.Logger.Warning("[CrewMode] ScanTarget: " + ex.Message);
+            _lastScannedCar = null;
             return (null, null);
         }
     }
@@ -240,6 +265,58 @@ public class GRDNCrewState : AStateBehaviour
                     $"[CrewMode] Request failed ({req.responseCode}): {req.error}");
             }
         }
+    }
+
+    // ── Selection-box helpers ──────────────────────────────────────────────────
+    // Creates a cube GameObject at the car's world-axis-aligned bounds and applies
+    // VanillaMaterial.Valid (cyan) to it — this is exactly what the vanilla Clear
+    // comms radio mode does to produce the selection box shown in-game.
+    // Never touches the car's own MeshRenderers.
+
+    private static void UpdateHighlightBox(CommsRadioUtility utility, TrainCar car)
+    {
+        ClearHighlightBox();
+        if (car == null) return;
+
+        var mat = utility.GetMaterial(VanillaMaterial.Valid);
+        if (mat == null) return;
+
+        try
+        {
+            // Aggregate world-space bounds across all car renderers
+            var renderers = car.GetComponentsInChildren<MeshRenderer>();
+            if (renderers.Length == 0) return;
+
+            Bounds bounds = renderers[0].bounds;
+            for (int i = 1; i < renderers.Length; i++)
+                bounds.Encapsulate(renderers[i].bounds);
+
+            // Spawn a plain cube at the bounds center — no collider needed
+            _highlightBox = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            var col = _highlightBox.GetComponent<Collider>();
+            if (col != null) UnityEngine.Object.Destroy(col);
+
+            _highlightBox.transform.position   = bounds.center;
+            _highlightBox.transform.localScale  = bounds.size;
+            _highlightBox.GetComponent<MeshRenderer>().sharedMaterial = mat;
+
+            _highlightedCar = car;
+        }
+        catch (Exception ex)
+        {
+            Main.ModEntry.Logger.Warning("[CrewMode] UpdateHighlightBox: " + ex.Message);
+            ClearHighlightBox();
+        }
+    }
+
+    private static void ClearHighlightBox()
+    {
+        if (_highlightBox != null)
+        {
+            UnityEngine.Object.Destroy(_highlightBox);
+            _highlightBox = null;
+        }
+        _highlightedCar = null;
     }
 
     private static string Esc(string s) =>
