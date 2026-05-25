@@ -10,6 +10,6 @@
     "HomePage": "https://github.com/Grdn-Network/grdnConnect",
     "Requirements": [ "CommsRadioAPI" ],
     "LoadAfter": [ "DVMultiplayer" ],
-    "MultiplayerCompatibility": "Required by all players",
+    "MultiplayerCompatibility": "All",
     "Description": "Exposes a local HTTP API for the GRDN Operations Discord bot. Serves job data, server info, and job completion endpoints. Required by all players in a DVMultiplayer session — the HTTP server runs on the host only, but clients need the mod for radio mode and defect alerts. CommsRadioAPI must be installed by everyone."
 }
