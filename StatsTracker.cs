@@ -2,9 +2,8 @@
 // Polls active locomotives every 5 seconds, accumulates car-miles (speed × time × carCount),
 // and flushes the totals to the bot's POST /stats-push endpoint every 60 seconds.
 //
-// "Car-miles" metric: each train accumulates (speed in m/s) × (poll interval) × (car count)
-// converted to miles. This weights a 20-car freight train more heavily than a solo loco,
-// which matches the operational contribution each run represents.
+// Miles metric: each train accumulates (speed in m/s) × (poll interval) converted to miles.
+// Tracks how far the locomotive itself travelled — not weighted by consist size.
 //
 // Only runs on the session host (IsHostOrSingleplayer guard). Clients never push stats —
 // the host sees the full world and is authoritative.
@@ -24,8 +23,11 @@ public class StatsTracker : MonoBehaviour
     private const float POLL_SEC  = 5f;    // speed-sample interval
     private const float FLUSH_SEC = 60f;   // push-to-bot interval
 
-    // Metres per mile — used to convert accumulated m·cars to car-miles
-    private const float M_PER_MILE = 1609.344f;
+    // Metres per mile — used to convert accumulated metres to miles
+    private const float M_PER_MILE  = 1609.344f;
+
+    // Minimum speed to register movement (filters out physics drift when "stopped")
+    private const float MIN_SPEED_MS = 0.5f;   // ~1.8 km/h
 
     // ── State ─────────────────────────────────────────────────────────────────
     // Keyed by train number (digits extracted from loco.ID).
@@ -61,12 +63,13 @@ public class StatsTracker : MonoBehaviour
                 string train = ExtractNumber(loco.ID);
                 if (string.IsNullOrEmpty(train)) continue;
 
-                float speedMs  = Mathf.Abs(loco.GetForwardSpeed()); // m/s
-                int   carCount = loco.trainset?.cars?.Count ?? 1;
+                float speedMs = Mathf.Abs(loco.GetForwardSpeed()); // m/s
 
-                // Δcar-miles = speed(m/s) × Δt(s) × cars / m_per_mile
-                float delta = speedMs * POLL_SEC * carCount / M_PER_MILE;
-                if (delta <= 0f) continue;
+                // Ignore physics drift when the loco is effectively stationary
+                if (speedMs < MIN_SPEED_MS) continue;
+
+                // Δmiles = speed(m/s) × Δt(s) / m_per_mile  (loco distance only, no consist weighting)
+                float delta = speedMs * POLL_SEC / M_PER_MILE;
 
                 if (!_accumulated.TryGetValue(train, out float prev)) prev = 0f;
                 _accumulated[train] = prev + delta;
@@ -136,7 +139,7 @@ public class StatsTracker : MonoBehaviour
             if (req.error != null)
                 Main.ModEntry.Logger.Warning($"[StatsTracker] Push failed: {req.error}");
             else
-                Main.ModEntry.Logger.Log($"[StatsTracker] Pushed {entries.Count} train(s)");
+                Main.ModEntry.Logger.Log($"[StatsTracker] Pushed miles for {entries.Count} train(s)");
         }
     }
 
