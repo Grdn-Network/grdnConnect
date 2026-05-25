@@ -29,6 +29,13 @@ public static class JobCompletionHelper
 					continue;
 
 				float wage = currentJob.GetWageForTheJob();
+
+				// Release handbrakes on all job cars before validation.
+				// DV's validator can fail if handbrakes are set, even when cars
+				// are correctly spotted. The remote /complete command has no way
+				// for the player to release them first, so we do it here.
+				ReleaseHandbrakesForJob(currentJob);
+
 				JobState val = instance.TryToCompleteAJob(currentJob);
 
 				if ((int)val == 2)
@@ -253,6 +260,92 @@ public static class JobCompletionHelper
 		catch (Exception ex)
 		{
 			Main.ModEntry.Logger.Warning($"[GRDNConnect] TryAdvanceJobChain: {ex.Message}");
+		}
+	}
+
+	/// <summary>
+	/// Sets handbrakePosition to 0 on every TrainCar that belongs to this job.
+	/// Uses reflection to avoid a hard compile-time dependency on BrakeSystem.
+	/// Called before TryToCompleteAJob so the DV validator never rejects the
+	/// job due to brake state, regardless of what the player has left set.
+	/// </summary>
+	private static void ReleaseHandbrakesForJob(Job job)
+	{
+		try
+		{
+			const System.Reflection.BindingFlags bf =
+				System.Reflection.BindingFlags.Public    | System.Reflection.BindingFlags.NonPublic |
+				System.Reflection.BindingFlags.Instance  | System.Reflection.BindingFlags.FlattenHierarchy;
+
+			// ── Collect GUIDs of all cars in this job via the chain controller ──
+			var jobGuids = new HashSet<string>();
+			var jobObjType = ((object)job).GetType();
+			object jcc = jobObjType.GetField("jobChainController", bf)?.GetValue(job)
+					  ?? jobObjType.GetProperty("jobChainController", bf)?.GetValue(job);
+			if (jcc != null)
+			{
+				object carsObj = jcc.GetType().GetField("carsForJobChain", bf)?.GetValue(jcc)
+							  ?? jcc.GetType().GetProperty("carsForJobChain", bf)?.GetValue(jcc);
+				if (carsObj is System.Collections.IEnumerable carsList)
+					foreach (var c in carsList)
+					{
+						if (c == null) continue;
+						var ct = c.GetType();
+						string g = ct.GetProperty("carGuid", bf)?.GetValue(c)?.ToString()
+								?? ct.GetField("carGuid", bf)?.GetValue(c)?.ToString();
+						if (!string.IsNullOrEmpty(g)) jobGuids.Add(g);
+					}
+			}
+
+			if (jobGuids.Count == 0) return;
+
+			// ── Find matching TrainCars in the scene and zero their handbrakes ──
+			foreach (var tc in UnityEngine.Object.FindObjectsOfType<TrainCar>())
+			{
+				string guid = tc.logicCar?.carGuid;
+				if (string.IsNullOrEmpty(guid) || !jobGuids.Contains(guid)) continue;
+
+				bool released = false;
+
+				// Primary: trainCar.brakeSystem (BrakeSystem component or field)
+				object bs = tc.GetType().GetProperty("brakeSystem", bf)?.GetValue(tc)
+						 ?? tc.GetType().GetField("brakeSystem", bf)?.GetValue(tc);
+
+				// Fallback: scan MonoBehaviour components for anything named "Brake"
+				if (bs == null)
+					foreach (var comp in tc.GetComponents<MonoBehaviour>())
+					{
+						if (comp == null) continue;
+						if (comp.GetType().Name.IndexOf("Brake", StringComparison.OrdinalIgnoreCase) >= 0)
+							{ bs = comp; break; }
+					}
+
+				if (bs == null) continue;
+				var bsType = bs.GetType();
+
+				foreach (var name in new[] {
+					"handbrakePosition", "HandbrakePosition",
+					"handbrakeFactor",   "HandbrakeFactor",
+					"handBrakePosition", "handBrakeFactor" })
+				{
+					var fi = bsType.GetField(name, bf);
+					if (fi?.FieldType == typeof(float))
+					{ fi.SetValue(bs, 0f); released = true; break; }
+
+					var pi = bsType.GetProperty(name, bf);
+					if (pi?.PropertyType == typeof(float) && pi.CanWrite)
+					{ pi.SetValue(bs, 0f); released = true; break; }
+				}
+
+				if (released)
+					Main.ModEntry.Logger.Log($"[GRDNConnect] Released handbrake on car {tc.ID}");
+				else
+					Main.ModEntry.Logger.Warning($"[GRDNConnect] Could not find handbrake field on {tc.ID} — brake system type: {bs?.GetType().Name ?? "?"}");
+			}
+		}
+		catch (Exception ex)
+		{
+			Main.ModEntry.Logger.Warning("[GRDNConnect] ReleaseHandbrakesForJob: " + ex.Message);
 		}
 	}
 
