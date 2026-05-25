@@ -61,11 +61,6 @@ public class GRDNCrewState : AStateBehaviour
     // Persists for the life of the game session.
     private static string _lastRegisteredTrain = null;
 
-    // ── Highlight state — CommsRadioAPI "Valid" blue material on targeted loco ─
-    private static Material _highlightMat      = null;  // cached on first use
-    private static TrainCar _lastScannedCar    = null;  // set by ScanTarget as side effect
-    private static TrainCar _lastHighlightedCar = null; // currently highlighted car
-
     private const float RAYCAST_RANGE = 100f;
 
     // ── Entry point — called when this mode is first constructed ──────────────
@@ -107,16 +102,6 @@ public class GRDNCrewState : AStateBehaviour
 
         // Idle: rescan each frame for a target change
         var target = ScanTarget(utility.SignalOrigin);
-        var newCar = _lastScannedCar; // set as side effect of ScanTarget
-
-        // Keep highlight in sync — apply when a new car is scanned, clear when lost
-        if (newCar != _lastHighlightedCar)
-        {
-            ClearHighlight();
-            if (newCar != null)
-                ApplyHighlight(utility, newCar);
-        }
-
         if (target.num == _trainNumber && target.type == _locoType)
             return this;
 
@@ -131,27 +116,19 @@ public class GRDNCrewState : AStateBehaviour
             // Up / Down — always rescan, clears any result or pending state
             case InputAction.Up:
             case InputAction.Down:
-                ClearHighlight();
                 return new GRDNCrewState(_host, ScanTarget(utility.SignalOrigin), Disp.Idle);
 
             case InputAction.Activate:
                 // Non-idle: treat as rescan
                 if (_disp != Disp.Idle)
-                {
-                    ClearHighlight();
                     return new GRDNCrewState(_host, ScanTarget(utility.SignalOrigin), Disp.Idle);
-                }
 
                 // Nothing targeted — fresh scan
                 if (_trainNumber == null)
-                {
-                    ClearHighlight();
                     return new GRDNCrewState(_host, ScanTarget(utility.SignalOrigin), Disp.Idle);
-                }
 
                 string fromTrain = _lastRegisteredTrain ?? _trainNumber;
                 _crewResult = Disp.Idle; // clear previous result before firing
-                ClearHighlight();         // entering Pending — remove highlight
                 _host.StartCoroutine(PostCrewAssign(fromTrain, _trainNumber, _locoType));
                 return new GRDNCrewState(_host, (_trainNumber, _locoType), Disp.Pending);
 
@@ -189,18 +166,17 @@ public class GRDNCrewState : AStateBehaviour
             else
             {
                 var cam = Camera.main;
-                if (cam == null) { _lastScannedCar = null; return (null, null); }
+                if (cam == null) return (null, null);
                 pos = cam.transform.position;
                 dir = cam.transform.forward;
             }
 
             if (!Physics.Raycast(pos, dir, out RaycastHit hit, RAYCAST_RANGE))
-            { _lastScannedCar = null; return (null, null); }
+                return (null, null);
 
             var car = hit.transform.GetComponentInParent<TrainCar>();
-            if (car == null || !car.IsLoco) { _lastScannedCar = null; return (null, null); }
+            if (car == null || !car.IsLoco) return (null, null);
 
-            _lastScannedCar = car;
             var match  = Regex.Match(car.ID ?? "", @"(\d+)$");
             string num = match.Success ? match.Groups[1].Value : car.ID;
             string type = RadioIntegration.MapCarType(((object)car.carType).ToString());
@@ -210,7 +186,6 @@ public class GRDNCrewState : AStateBehaviour
         catch (Exception ex)
         {
             Main.ModEntry.Logger.Warning("[CrewMode] ScanTarget: " + ex.Message);
-            _lastScannedCar = null;
             return (null, null);
         }
     }
@@ -265,59 +240,6 @@ public class GRDNCrewState : AStateBehaviour
                     $"[CrewMode] Request failed ({req.responseCode}): {req.error}");
             }
         }
-    }
-
-    // ── Loco highlight ─────────────────────────────────────────────────────────
-    // Applies the CommsRadioAPI "Valid" (blue) material as an extra layer on all
-    // MeshRenderers of the targeted loco — identical to how the vanilla Clear
-    // comms radio mode highlights its target car.
-
-    private static void ApplyHighlight(CommsRadioUtility utility, TrainCar car)
-    {
-        if (car == null) return;
-
-        if (_highlightMat == null)
-            _highlightMat = utility.GetMaterial(VanillaMaterial.Valid);
-        if (_highlightMat == null) return;
-
-        _lastHighlightedCar = car;
-        try
-        {
-            foreach (var rend in car.GetComponentsInChildren<MeshRenderer>())
-            {
-                if (rend == null) continue;
-                var mats    = rend.sharedMaterials;
-                var newMats = new Material[mats.Length + 1];
-                mats.CopyTo(newMats, 0);
-                newMats[mats.Length] = _highlightMat;
-                rend.sharedMaterials = newMats;
-            }
-        }
-        catch { }
-    }
-
-    private static void ClearHighlight()
-    {
-        if (_lastHighlightedCar == null) return;
-        if (_highlightMat == null) { _lastHighlightedCar = null; return; }
-
-        try
-        {
-            foreach (var rend in _lastHighlightedCar.GetComponentsInChildren<MeshRenderer>())
-            {
-                if (rend == null) continue;
-                var mats = rend.sharedMaterials;
-                if (mats.Length > 0 && mats[mats.Length - 1] == _highlightMat)
-                {
-                    var newMats = new Material[mats.Length - 1];
-                    Array.Copy(mats, newMats, mats.Length - 1);
-                    rend.sharedMaterials = newMats;
-                }
-            }
-        }
-        catch { }
-
-        _lastHighlightedCar = null;
     }
 
     private static string Esc(string s) =>
