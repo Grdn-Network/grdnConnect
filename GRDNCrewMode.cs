@@ -48,51 +48,64 @@ public class GRDNCrewState : AStateBehaviour
     private readonly MonoBehaviour _host;
     private readonly string        _trainNumber;  // targeted loco number (null = nothing in sights)
     private readonly string        _locoType;     // targeted loco type code (null = unknown)
-    private readonly bool          _sent;
+    private readonly Disp          _disp;
+
+    // ── Display state enum ─────────────────────────────────────────────────────
+    private enum Disp { Idle, Pending, Success, Failure }
+
+    // ── Static result signal — set by the PostCrewAssign coroutine ────────────
+    // Reset to Idle before each send; set to Success/Failure on completion.
+    // Unity coroutines run on the main thread so no volatile needed.
+    private static Disp _crewResult = Disp.Idle;
 
     // Persists for the life of the game session.
-    // Tracks the last train number successfully pushed so the bot knows which
-    // registration to move when the player changes locos.
     private static string _lastRegisteredTrain = null;
 
-    private const float RAYCAST_RANGE = 100f;   // metres — same order of magnitude as switch changer
+    private const float RAYCAST_RANGE = 100f;
 
-    // ── Entry point — called when this mode state is first constructed ────────
+    // ── Entry point — called when this mode is first constructed ──────────────
     public GRDNCrewState(MonoBehaviour host)
-        : this(host, ScanTarget(null), sent: false)
+        : this(host, ScanTarget(null), Disp.Idle)
     { }
 
     // ── Internal constructor ──────────────────────────────────────────────────
-    private GRDNCrewState(MonoBehaviour host, (string num, string type) target, bool sent)
+    private GRDNCrewState(MonoBehaviour host, (string num, string type) target, Disp disp)
         : base(new CommsRadioState(
             "GRDN CREW",
-            MakeContent(target.num, target.type, sent),
-            (!sent && target.num != null) ? "ASSIGN" : "",
+            MakeContent(target.num, target.type, disp),
+            (disp == Disp.Idle && target.num != null) ? "ASSIGN" : "",
             LCDArrowState.Off,
-            sent ? LEDState.Off : (target.num != null ? LEDState.On : LEDState.Off),
-            (!sent && target.num != null) ? ButtonBehaviourType.Override : ButtonBehaviourType.Regular))
+            (disp == Disp.Idle && target.num != null) ? LEDState.On : LEDState.Off,
+            (disp == Disp.Idle && target.num != null) ? ButtonBehaviourType.Override : ButtonBehaviourType.Regular))
     {
         _host        = host;
         _trainNumber = target.num;
         _locoType    = target.type;
-        _sent        = sent;
+        _disp        = disp;
     }
 
     // ── Real-time targeting — updates LCD as the player aims ──────────────────
-    // Called every frame by CommsRadioAPI. Returns a new state if the target
-    // under the crosshair changed; returns this if nothing changed.
     public override AStateBehaviour OnUpdate(CommsRadioUtility utility)
     {
-        // While showing "Assigning..." don't rescan — wait for Activate/Up/Down
-        if (_sent) return this;
+        // Pending: check if the coroutine has posted a result
+        if (_disp == Disp.Pending)
+        {
+            var r = _crewResult;
+            if (r == Disp.Success || r == Disp.Failure)
+                return new GRDNCrewState(_host, (_trainNumber, _locoType), r);
+            return this;
+        }
 
+        // Success/Failure: hold until player rescans with Up/Down
+        if (_disp == Disp.Success || _disp == Disp.Failure)
+            return this;
+
+        // Idle: rescan each frame for a target change
         var target = ScanTarget(utility.SignalOrigin);
-
-        // Only transition if something actually changed — avoids per-frame allocation
         if (target.num == _trainNumber && target.type == _locoType)
             return this;
 
-        return new GRDNCrewState(_host, target, sent: false);
+        return new GRDNCrewState(_host, target, Disp.Idle);
     }
 
     // ── State machine ─────────────────────────────────────────────────────────
@@ -100,44 +113,46 @@ public class GRDNCrewState : AStateBehaviour
     {
         switch (action)
         {
-            // Up / Down — explicit rescan (also clears sent state)
+            // Up / Down — always rescan, clears any result or pending state
             case InputAction.Up:
             case InputAction.Down:
-                return new GRDNCrewState(_host, ScanTarget(utility.SignalOrigin), sent: false);
+                return new GRDNCrewState(_host, ScanTarget(utility.SignalOrigin), Disp.Idle);
 
             case InputAction.Activate:
-                // Activate must always result in a state transition (API requirement).
-                // When in "Assigning..." state, treat as rescan so the player can continue.
-                if (_sent)
-                    return new GRDNCrewState(_host, ScanTarget(utility.SignalOrigin), sent: false);
+                // Non-idle: treat as rescan
+                if (_disp != Disp.Idle)
+                    return new GRDNCrewState(_host, ScanTarget(utility.SignalOrigin), Disp.Idle);
 
                 // Nothing targeted — fresh scan
                 if (_trainNumber == null)
-                    return new GRDNCrewState(_host, ScanTarget(utility.SignalOrigin), sent: false);
+                    return new GRDNCrewState(_host, ScanTarget(utility.SignalOrigin), Disp.Idle);
 
-                // Every player assigns THEMSELVES: each ASSIGN press sends the local
-                // player's own Steam ID, so host and clients update their own records
-                // independently — no cross-player conflict. The bot uses steamId to
-                // match the Discord account and update the crew entry.
-
-                // fromTrain: where the bot will look for the existing registration.
-                // First use this session → assume the targeted loco is already registered
-                // (just updates locoType). Subsequent uses → move from the last registered train.
                 string fromTrain = _lastRegisteredTrain ?? _trainNumber;
+                _crewResult = Disp.Idle; // clear previous result before firing
                 _host.StartCoroutine(PostCrewAssign(fromTrain, _trainNumber, _locoType));
-
-                // Return sent state — disables ASSIGN until player re-aims (Up/Down)
-                return new GRDNCrewState(_host, (_trainNumber, _locoType), sent: true);
+                return new GRDNCrewState(_host, (_trainNumber, _locoType), Disp.Pending);
 
             default:
-                return new GRDNCrewState(_host, (_trainNumber, _locoType), _sent);
+                return new GRDNCrewState(_host, (_trainNumber, _locoType), _disp);
         }
     }
 
+    // ── LCD content ───────────────────────────────────────────────────────────
+    private static string MakeContent(string trainNumber, string locoType, Disp disp)
+    {
+        switch (disp)
+        {
+            case Disp.Pending: return "Assigning...";
+            case Disp.Success: return $"Done! Train {trainNumber}";
+            case Disp.Failure: return "Failed! See log";
+        }
+        // Idle
+        if (trainNumber == null) return "Aim at a loco";
+        string prefix = !string.IsNullOrEmpty(locoType) ? locoType + "  " : "";
+        return $"{prefix}{trainNumber}";
+    }
+
     // ── Raycast targeting ─────────────────────────────────────────────────────
-    // Fires a ray from the signal origin (when available) or the player camera.
-    // Returns (trainNumber, locoType) if a loco is centred; (null, null) otherwise.
-    // Tenders and cargo cars return (null, null) — IsLoco filters them out.
     private static (string num, string type) ScanTarget(Transform signalOrigin)
     {
         try
@@ -159,13 +174,12 @@ public class GRDNCrewState : AStateBehaviour
             if (!Physics.Raycast(pos, dir, out RaycastHit hit, RAYCAST_RANGE))
                 return (null, null);
 
-            // The hit collider may be on a child transform — walk up to find the TrainCar root
             var car = hit.transform.GetComponentInParent<TrainCar>();
-            if (car == null || !car.IsLoco) return (null, null);   // ignore tenders / cargo
+            if (car == null || !car.IsLoco) return (null, null);
 
-            var match    = Regex.Match(car.ID ?? "", @"(\d+)$");
-            string num   = match.Success ? match.Groups[1].Value : car.ID;
-            string type  = RadioIntegration.MapCarType(((object)car.carType).ToString());
+            var match  = Regex.Match(car.ID ?? "", @"(\d+)$");
+            string num = match.Success ? match.Groups[1].Value : car.ID;
+            string type = RadioIntegration.MapCarType(((object)car.carType).ToString());
 
             return (num, type);
         }
@@ -185,26 +199,22 @@ public class GRDNCrewState : AStateBehaviour
         if (string.IsNullOrEmpty(pushUrl))
         {
             Main.ModEntry.Logger.Warning("[CrewMode] BotPushUrl not set — skipped.");
+            _crewResult = Disp.Failure;
             yield break;
         }
 
-        // locoType is optional — omit the field entirely if unknown
         string locoField = !string.IsNullOrEmpty(locoType)
             ? $",\"locoType\":\"{Esc(locoType)}\""
             : "";
 
-        // Include Steam identity so the bot can auto-link Discord ↔ Steam on first push.
-        // Returns (0, "") gracefully if Steamworks is unavailable.
         var (steamId, steamName) = RadioIntegration.GetLocalSteamInfo();
         string steamField = steamId > 0
             ? $",\"steamId\":\"{steamId}\",\"steamName\":\"{Esc(steamName)}\""
             : "";
 
         string fullUrl = pushUrl + "/update-crew";
-        Main.ModEntry.Logger.Log($"[CrewMode] Posting to: {fullUrl}");
-
-        string body = $"{{\"fromTrainNumber\":\"{Esc(fromTrain)}\",\"toTrainNumber\":\"{Esc(toTrain)}\"{locoField}{steamField}}}";
-        byte[] raw  = Encoding.UTF8.GetBytes(body);
+        string body    = $"{{\"fromTrainNumber\":\"{Esc(fromTrain)}\",\"toTrainNumber\":\"{Esc(toTrain)}\"{locoField}{steamField}}}";
+        byte[] raw     = Encoding.UTF8.GetBytes(body);
 
         using (var req = new UnityWebRequest(fullUrl, "POST"))
         {
@@ -219,25 +229,17 @@ public class GRDNCrewState : AStateBehaviour
             if (req.error == null)
             {
                 _lastRegisteredTrain = toTrain;
+                _crewResult = Disp.Success;
                 Main.ModEntry.Logger.Log(
                     $"[CrewMode] Registered → [{locoType ?? "?"}] {toTrain} (from {fromTrain})");
             }
             else
             {
+                _crewResult = Disp.Failure;
                 Main.ModEntry.Logger.Warning(
-                    $"[CrewMode] Request failed ({req.responseCode}): {req.error} | url={fullUrl}");
+                    $"[CrewMode] Request failed ({req.responseCode}): {req.error}");
             }
         }
-    }
-
-    // ── Display ───────────────────────────────────────────────────────────────
-    private static string MakeContent(string trainNumber, string locoType, bool sent)
-    {
-        if (sent)                return "Assigning...";
-        if (trainNumber == null) return "Aim at a loco";
-        // e.g. "DE6  034" or just "034" if type unknown
-        string prefix = !string.IsNullOrEmpty(locoType) ? locoType + "  " : "";
-        return $"{prefix}{trainNumber}";
     }
 
     private static string Esc(string s) =>

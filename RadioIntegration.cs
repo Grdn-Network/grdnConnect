@@ -113,6 +113,10 @@ public static class RadioIntegration
 
     // ── Push callback ─────────────────────────────────────────────────────────
 
+    // ── Radio push result — checked by GRDNRadioState.OnUpdate while in Sent state ─
+    // 0 = pending, 1 = success, 2 = failure
+    internal static int RadioResult = 0;
+
     internal static void OnChannelSelected(string vcId)
     {
         if (_host != null)
@@ -172,9 +176,15 @@ public static class RadioIntegration
             yield return req.SendWebRequest();
 
             if (req.error == null)
+            {
+                RadioResult = 1;
                 Main.ModEntry.Logger.Log($"[GRDNConnect] Radio push OK → vcId={vcId}");
+            }
             else
+            {
+                RadioResult = 2;
                 Main.ModEntry.Logger.Warning($"[GRDNConnect] Radio push failed ({req.responseCode}): {req.error}");
+            }
         }
     }
 
@@ -490,16 +500,34 @@ public class GRDNRadioState : AStateBehaviour
     private static string MakeContent(
         List<(string name, string vcId)> channels, int idx, bool sent, bool browsing)
     {
-        if (sent)       return "Switching...";
+        if (sent)
+        {
+            // Result not yet known — show pending; OnUpdate will transition once the flag is set
+            int r = RadioIntegration.RadioResult;
+            if (r == 1) return "Switched!";
+            if (r == 2) return "Switch failed!";
+            return "Switching...";
+        }
         if (!browsing)  return channels.Count > 0 ? $"{channels.Count} ch. ready" : "No channels";
         if (channels.Count == 0) return "No channels";
         return $"{idx + 1}/{channels.Count}  {channels[idx].name}";
     }
 
-    // ── Real-time refresh — only runs in idle to avoid per-frame alloc ────────
+    // ── Real-time refresh ─────────────────────────────────────────────────────
     public override AStateBehaviour OnUpdate(CommsRadioUtility utility)
     {
-        if (_sent || _browsing) return this;
+        // While sent, poll RadioResult until a result arrives, then re-enter sent
+        // state so MakeContent picks up the new content string.
+        if (_sent)
+        {
+            int r = RadioIntegration.RadioResult;
+            if (r != 0)
+                return new GRDNRadioState(_channels, _onSelected, _index, sent: true, browsing: false);
+            return this;
+        }
+
+        if (_browsing) return this;
+
         var live = RadioIntegration.ActiveChannels;
         if (live.Count == _channels.Count) return this;
         return new GRDNRadioState(live, _onSelected, 0);
@@ -513,13 +541,9 @@ public class GRDNRadioState : AStateBehaviour
         {
             case InputAction.Up:
             case InputAction.Down:
-                // Sent or idle: Up/Down returns to idle (no channel scroll).
-                // In idle this means Up/Down does nothing visible — the player
-                // can use them to navigate to the next radio mode.
                 if (_sent || !_browsing)
                     return new GRDNRadioState(ch, _onSelected, _index, false, false);
 
-                // Browsing: scroll channel list
                 if (ch.Count == 0)
                     return new GRDNRadioState(ch, _onSelected, 0, false, true);
                 int next = action == InputAction.Up
@@ -528,18 +552,18 @@ public class GRDNRadioState : AStateBehaviour
                 return new GRDNRadioState(ch, _onSelected, next, false, true);
 
             case InputAction.Activate:
-                // Sent → back to idle
+                // Sent → back to idle (clears result display)
                 if (_sent)
                     return new GRDNRadioState(ch, _onSelected, _index, false, false);
 
-                // Idle → browse (read live channel list at this moment)
                 if (!_browsing)
                     return new GRDNRadioState(ch, _onSelected, _index, false, true);
 
-                // Browsing → switch channel
                 if (ch.Count == 0)
                     return new GRDNRadioState(ch, _onSelected, 0, false, true);
+
                 int idx = Math.Min(_index, ch.Count - 1);
+                RadioIntegration.RadioResult = 0; // clear before firing
                 _onSelected?.Invoke(ch[idx].vcId);
                 return new GRDNRadioState(ch, _onSelected, idx, sent: true, browsing: false);
 
