@@ -451,7 +451,8 @@ public class GRDNConnectBehaviour : MonoBehaviour
 
 		string nameJson = !string.IsNullOrEmpty(serverName) ? $"\"{Escape(serverName)}\"" : "null";
 		string passJson = !string.IsNullOrEmpty(password)   ? $"\"{Escape(password)}\"" : "null";
-		SendJson(res, 200, $"{{\"serverName\":{nameJson},\"password\":{passJson}}}");
+		string imJson   = Main.Settings.InterchangeMode ? "true" : "false";
+		SendJson(res, 200, $"{{\"serverName\":{nameJson},\"password\":{passJson},\"interchangeMode\":{imJson}}}");
 	}
 
 	private unsafe void HandleGetJobs(HttpListenerResponse res)

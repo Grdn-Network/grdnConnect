@@ -31,6 +31,12 @@ public class Settings : UnityModManager.ModSettings, IDrawable
     [Draw("Radio Channels (JSON — see mod description for format)")]
     public string RadioChannelsJson = "[]";
 
+    // ── Operations mode ───────────────────────────────────────────────────────
+    // Enable before /session start. The bot reads this via /server-info and
+    // activates hub-and-spoke stats: car-miles, leg classification, role labels.
+    [Draw("Interchange Mode — track car-miles and role labels for hub-and-spoke operations")]
+    public bool InterchangeMode = false;
+
     public override void Save(UnityModManager.ModEntry modEntry)
     {
         UnityModManager.ModSettings.Save<Settings>(this, modEntry);
