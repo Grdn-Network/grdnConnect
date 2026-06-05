@@ -283,40 +283,58 @@ public class GRDNCrewState : AStateBehaviour
 
         try
         {
-            // Non-trigger BoxColliders give a tight car-body bound.
-            // MeshRenderers include interior cab geometry, LOD shadow meshes, etc.
-            // and produce a box far larger than the visible hull.
+            // Compute bounds in the car's own local space so the box rotates with the loco.
+            // Using car.transform.InverseTransformPoint converts each collider's world-space
+            // center into car-local coordinates — the resulting box aligns to the car's axes
+            // rather than the world axes, so it looks correct on curves and diagonal tracks.
             var allColliders = car.GetComponentsInChildren<BoxCollider>();
-            Bounds? nullableBounds = null;
+            Bounds? localBounds = null;
+
             foreach (var c in allColliders)
             {
                 if (c.isTrigger) continue;
-                if (nullableBounds == null) { nullableBounds = c.bounds; }
-                else { var b = nullableBounds.Value; b.Encapsulate(c.bounds); nullableBounds = b; }
+
+                // Collider center in car-local space
+                Vector3 localCenter = car.transform.InverseTransformPoint(
+                    c.transform.TransformPoint(c.center));
+
+                // Approximate half-extents in car-local space (ignores sub-collider rotation,
+                // which is fine — loco body colliders are almost always axis-aligned to the car)
+                Vector3 halfSize = c.size * 0.5f;
+
+                if (localBounds == null)
+                {
+                    localBounds = new Bounds(localCenter, c.size);
+                }
+                else
+                {
+                    var b = localBounds.Value;
+                    b.Encapsulate(localCenter + halfSize);
+                    b.Encapsulate(localCenter - halfSize);
+                    localBounds = b;
+                }
             }
 
-            Bounds bounds;
-            if (nullableBounds != null)
+            // Fallback: use renderer bounds if no BoxColliders found
+            if (localBounds == null)
             {
-                bounds = nullableBounds.Value;
-            }
-            else
-            {
-                // Fallback: aggregate renderer bounds (original behaviour)
                 var renderers = car.GetComponentsInChildren<MeshRenderer>();
                 if (renderers.Length == 0) return;
-                bounds = renderers[0].bounds;
-                for (int i = 1; i < renderers.Length; i++)
-                    bounds.Encapsulate(renderers[i].bounds);
+                Bounds world = renderers[0].bounds;
+                for (int i = 1; i < renderers.Length; i++) world.Encapsulate(renderers[i].bounds);
+                Vector3 localCenter = car.transform.InverseTransformPoint(world.center);
+                localBounds = new Bounds(localCenter, car.transform.InverseTransformVector(world.size));
             }
 
-            // Spawn a plain cube at the bounds center — no collider needed
+            // Spawn a plain cube parented to the car — inherits its rotation and position
             _highlightBox = GameObject.CreatePrimitive(PrimitiveType.Cube);
             var col = _highlightBox.GetComponent<Collider>();
             if (col != null) UnityEngine.Object.Destroy(col);
 
-            _highlightBox.transform.position   = bounds.center;
-            _highlightBox.transform.localScale  = bounds.size;
+            _highlightBox.transform.SetParent(car.transform, false);
+            _highlightBox.transform.localPosition = localBounds.Value.center;
+            _highlightBox.transform.localRotation = Quaternion.identity;
+            _highlightBox.transform.localScale    = localBounds.Value.size + Vector3.one * 0.1f;
             _highlightBox.GetComponent<MeshRenderer>().sharedMaterial = mat;
 
             _highlightedCar = car;
