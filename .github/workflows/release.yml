@@ -60,6 +60,21 @@ jobs:
           Set-Content Info.json $text -Encoding utf8NoBOM
           Write-Host "Done — Info.json now contains: $(Select-String 'Version' Info.json)"
 
+      - name: Generate GRDNDefaults.cs
+        shell: pwsh
+        env:
+          BOT_URL: ${{ secrets.GRDN_BOT_URL }}
+          BOT_SECRET: ${{ secrets.GRDN_BOT_SECRET }}
+        run: |
+          @"
+internal static class GRDNDefaults
+{
+    internal const string BotUrl    = "$env:BOT_URL";
+    internal const string BotSecret = "$env:BOT_SECRET";
+}
+"@ | Set-Content GRDNDefaults.cs -Encoding utf8NoBOM
+          Write-Host "GRDNDefaults.cs generated"
+
       - name: Restore NuGet packages
         run: dotnet restore GRDNConnect.csproj
 
