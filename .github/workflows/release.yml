@@ -66,14 +66,17 @@ jobs:
           BOT_URL: ${{ secrets.GRDN_BOT_URL }}
           BOT_SECRET: ${{ secrets.GRDN_BOT_SECRET }}
         run: |
-          @"
-internal static class GRDNDefaults
-{
-    internal const string BotUrl    = "$env:BOT_URL";
-    internal const string BotSecret = "$env:BOT_SECRET";
-}
-"@ | Set-Content GRDNDefaults.cs -Encoding utf8NoBOM
-          Write-Host "GRDNDefaults.cs generated"
+          $url    = if ($env:BOT_URL)    { $env:BOT_URL }    else { "" }
+          $secret = if ($env:BOT_SECRET) { $env:BOT_SECRET } else { "" }
+          $lines = @(
+            'internal static class GRDNDefaults',
+            '{',
+            "    internal const string BotUrl    = `"$url`";",
+            "    internal const string BotSecret = `"$secret`";",
+            '}'
+          )
+          $lines | Set-Content -Path GRDNDefaults.cs -Encoding utf8NoBOM
+          Write-Host "GRDNDefaults.cs generated (BotUrl length=$($url.Length))"
 
       - name: Restore NuGet packages
         run: dotnet restore GRDNConnect.csproj

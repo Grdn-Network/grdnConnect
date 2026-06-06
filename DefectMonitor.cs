@@ -6,8 +6,7 @@
 // ─────────────────
 //   Hot Box         — wheel bearing overheat (WheelslipController / DamagableTrainCar)
 //   Derailment      — TrainCar.derailed flag
-//   Air Hose        — brake pipe pressure loss on a coupled train
-//   Dragging Equip  — general damage exceeds 60% threshold (DamagableTrainCar)
+//   Dragging Equip  — general damage exceeds 85% threshold (DamagableTrainCar)
 //
 // RANDOM CONSIST CHECK
 // ─────────────────────
@@ -42,6 +41,8 @@ public class DefectMonitor : MonoBehaviour
     // Track active (train+type) alerts so we only fire once per incident.
     // Cleared when the defect resolves.
     private readonly HashSet<string> _fired = new HashSet<string>();
+    private readonly Dictionary<string, DateTime> _cooldowns = new Dictionary<string, DateTime>();
+    private readonly System.Random _rng = new System.Random();
 
     // ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -82,8 +83,14 @@ public class DefectMonitor : MonoBehaviour
                 {
                     nowFired.Add(defectKey);
 
-                    if (_fired.Contains(defectKey)) continue; // already known
+                    if (_fired.Contains(defectKey))
+                    {
+                        if (!_cooldowns.TryGetValue(defectKey, out DateTime lastFired)) continue;
+                        double elapsed = (DateTime.UtcNow - lastFired).TotalMinutes;
+                        if (elapsed < 12.0 || _rng.NextDouble() > 0.08) continue;
+                    }
                     _fired.Add(defectKey);
+                    _cooldowns[defectKey] = DateTime.UtcNow;
 
                     if (!canPost)
                     {
@@ -157,25 +164,6 @@ public class DefectMonitor : MonoBehaviour
         }
         catch { }
 
-        // ── Air Hose / Brake Pipe ─────────────────────────────────────────────
-        // A brake pipe pressure anomaly on a coupled train suggests an air hose issue.
-        try
-        {
-            // Access via reflection — avoids hard dependency on DV.BrakeSystem.dll
-            object brakes = GetMemberValue(loco, bf, "brakeSystem");
-            if (brakes != null && (loco.trainset?.cars?.Count ?? 1) > 1)
-            {
-                float pipePsi = GetFloat(brakes, bf,
-                    "brakePipePressure", "BrakePipePressure",
-                    "mainReservoirPressure", "MainReservoirPressure");
-                // Pressure significantly below working value (typically ~90 psi / 6 bar)
-                // suggests an open air hose or parted train
-                if (pipePsi > 0f && pipePsi < 40f)
-                    results.Add(($"{train}:airhose", "Air Hose Defect", null));
-            }
-        }
-        catch { }
-
         // ── Dragging Equipment / General Damage ───────────────────────────────
         // Overall damage > 60 % on any car in the consist → dragging equipment warning.
         try
@@ -191,7 +179,7 @@ public class DefectMonitor : MonoBehaviour
                     float level = GetFloat(dmg, bf,
                         "currentDamagePercentage", "DamagePercentage",
                         "damagePercentage", "damage");
-                    if (level > 0.60f)
+                    if (level > 0.85f)
                     {
                         string carId = car.ID ?? "unknown";
                         results.Add(($"{train}:drag:{carId}", "Dragging Equipment", $"car {ExtractNumber(carId)}"));
