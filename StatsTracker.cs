@@ -20,7 +20,10 @@ using UnityEngine.Networking;
 public class StatsTracker : MonoBehaviour
 {
     // ── Timing ────────────────────────────────────────────────────────────────
-    private const float POLL_SEC  = 5f;    // speed-sample interval
+    // Car-miles is an accumulating integral (speed × Δt), so a coarser sample
+    // interval barely changes the total but cuts the cost of the per-poll
+    // FindObjectsOfType<TrainCar> scan. 15 s is plenty for distance tracking.
+    private const float POLL_SEC  = 15f;   // speed-sample interval
     private const float FLUSH_SEC = 60f;   // push-to-bot interval
 
     // Metres per mile — used to convert accumulated metres to miles
@@ -139,7 +142,7 @@ public class StatsTracker : MonoBehaviour
             if (req.error != null)
                 Main.ModEntry.Logger.Warning($"[StatsTracker] Push failed: {req.error}");
             else
-                Main.ModEntry.Logger.Log($"[StatsTracker] Pushed miles for {entries.Count} train(s)");
+                Main.LogVerbose($"[StatsTracker] Pushed miles for {entries.Count} train(s)");
         }
     }
 

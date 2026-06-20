@@ -65,7 +65,7 @@ public class DefectMonitor : MonoBehaviour
             // Scan every poll — even without a session URL — so _fired stays
             // current with pre-existing defects. That way, when a session starts
             // and the URL becomes available, we don't flood the bot with alerts
-            // for airhoses/derails that were already present at load time.
+            // for derails/hotboxes that were already present at load time.
             string pushUrl = GRDNConnectBehaviour.ActiveBotUrl?.TrimEnd('/');
             bool   canPost = !string.IsNullOrEmpty(pushUrl);
 
@@ -259,7 +259,6 @@ public class DefectMonitor : MonoBehaviour
         {
             case "Derailment":         return "Stop immediately and contact dispatch";
             case "Hot Box":            return "Reduce speed and inspect";
-            case "Air Hose Defect":    return "Check brake line and reduce speed";
             case "Dragging Equipment": return "Stop train and inspect consist";
             default:                   return "Reduce speed and inspect";
         }
@@ -380,16 +379,6 @@ public class DefectMonitor : MonoBehaviour
     {
         var type = FindTypeByName(typeName);
         return type != null ? host.GetComponentInChildren(type) : null;
-    }
-
-    /// <summary>Returns the value of a named property or field, or null if not found.</summary>
-    private static object GetMemberValue(object obj, BindingFlags bf, string name)
-    {
-        var t     = obj.GetType();
-        var prop  = t.GetProperty(name, bf);
-        if (prop  != null) return prop.GetValue(obj);
-        var field = t.GetField(name, bf);
-        return field?.GetValue(obj);
     }
 
     // ═════════════════════════════════════════════════════════════════════════

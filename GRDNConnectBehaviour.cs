@@ -439,7 +439,7 @@ public class GRDNConnectBehaviour : MonoBehaviour
 							?? settingsType.GetProperty("ServerName", BindingFlags.Public | BindingFlags.Instance)?.GetValue(settingsObj))?.ToString();
 						password = (settingsType.GetField("Password", BindingFlags.Public | BindingFlags.Instance)?.GetValue(settingsObj)
 							?? settingsType.GetProperty("Password", BindingFlags.Public | BindingFlags.Instance)?.GetValue(settingsObj))?.ToString();
-						Main.ModEntry.Logger.Log($"[GRDNConnect] server-info: name='{serverName}' hasPassword={!string.IsNullOrEmpty(password)}");
+						Main.LogVerbose($"[GRDNConnect] server-info: name='{serverName}' hasPassword={!string.IsNullOrEmpty(password)}");
 					}
 				}
 			}
@@ -585,7 +585,7 @@ public class GRDNConnectBehaviour : MonoBehaviour
 		sb.Append($"\"settingsSecret\":\"{Escape(MaskSecret(settingsSecret))}\"");
 		sb.Append("}");
 
-		Main.ModEntry.Logger.Log($"[GRDNConnect] /debug-boturl → activeUrl={activeUrl ?? "(null)"} source={source}");
+		Main.LogVerbose($"[GRDNConnect] /debug-boturl → activeUrl={activeUrl ?? "(null)"} source={source}");
 		SendJson(res, 200, sb.ToString());
 	}
 
@@ -745,7 +745,7 @@ public class GRDNConnectBehaviour : MonoBehaviour
 			if (!string.IsNullOrEmpty(serverIp))
 			{
 				string url = $"http://{serverIp}:{Main.Settings.Port}/client-config";
-				Main.ModEntry.Logger.Log($"[GRDNConnect] Client: fetching session config from host at {url}");
+				Main.LogVerbose($"[GRDNConnect] Client: fetching session config from host at {url}");
 
 				using (var req = UnityWebRequest.Get(url))
 				{
@@ -766,7 +766,7 @@ public class GRDNConnectBehaviour : MonoBehaviour
 							yield break;  // success
 						}
 						// botUrl null = host hasn't started a session yet — keep retrying
-						Main.ModEntry.Logger.Log(
+						Main.LogVerbose(
 							"[GRDNConnect] Host has no session config yet — retrying in 15 s");
 					}
 					else
@@ -798,33 +798,6 @@ public class GRDNConnectBehaviour : MonoBehaviour
 		res.ContentLength64 = bytes.Length;
 		res.OutputStream.Write(bytes, 0, bytes.Length);
 		res.OutputStream.Close();
-	}
-
-	private string GetJobField(Job job, params string[] names)
-	{
-		Type type = ((object)job).GetType();
-		foreach (string name in names)
-		{
-			FieldInfo field = type.GetField(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-			if (field != null)
-			{
-				object value = field.GetValue(job);
-				if (value != null)
-				{
-					return value.ToString();
-				}
-			}
-			PropertyInfo property = type.GetProperty(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-			if (property != null)
-			{
-				object value2 = property.GetValue(job);
-				if (value2 != null)
-				{
-					return value2.ToString();
-				}
-			}
-		}
-		return null;
 	}
 
 	private string GetChainDataField(Job job, string fieldName)
@@ -996,7 +969,7 @@ public class GRDNConnectBehaviour : MonoBehaviour
 						}
 					}
 				}
-				Main.ModEntry.Logger.Log($"[GRDNConnect] /locos: {carGuidToJobs.Count} car GUID(s) mapped");
+				Main.LogVerbose($"[GRDNConnect] /locos: {carGuidToJobs.Count} car GUID(s) mapped");
 			}
 
 			TrainCar[] allCars = UnityEngine.Object.FindObjectsOfType<TrainCar>();
@@ -1257,7 +1230,7 @@ public class GRDNConnectBehaviour : MonoBehaviour
 
 				if (guids.Count > 0)
 				{
-					Main.ModEntry.Logger.Log($"[GRDNConnect] Job '{job.ID}': {guids.Count} car(s) via carsForJobChain");
+					Main.LogVerbose($"[GRDNConnect] Job '{job.ID}': {guids.Count} car(s) via carsForJobChain");
 					return guids;
 				}
 			}
@@ -1270,7 +1243,7 @@ public class GRDNConnectBehaviour : MonoBehaviour
 				foreach (var task in tasks)
 					ExtractCarGuids(task, guids, 0);
 
-			Main.ModEntry.Logger.Log($"[GRDNConnect] Job '{job.ID}': {guids.Count} car(s) via task-tree fallback");
+			Main.LogVerbose($"[GRDNConnect] Job '{job.ID}': {guids.Count} car(s) via task-tree fallback");
 		}
 		catch (Exception ex)
 		{

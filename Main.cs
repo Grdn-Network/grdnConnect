@@ -9,6 +9,18 @@ public class Main
 
 	private static GameObject _hostObject;
 
+	/// <summary>
+	/// Logs a message only when the "Verbose Logging" UMM setting is enabled.
+	/// Use for high-frequency diagnostics (per-job, per-request, per-poll) so the
+	/// main thread isn't doing synchronous log-file I/O during ops. Errors and
+	/// warnings should still use ModEntry.Logger.Error/Warning directly.
+	/// </summary>
+	public static void LogVerbose(string message)
+	{
+		if (Settings != null && Settings.VerboseLogging)
+			ModEntry.Logger.Log(message);
+	}
+
 	public static bool Load(UnityModManager.ModEntry modEntry)
 	{
 		ModEntry = modEntry;
@@ -20,11 +32,13 @@ public class Main
 		Object.DontDestroyOnLoad((Object)(object)_hostObject);
 		_hostObject.AddComponent<GRDNConnectBehaviour>();
 
-		// Hotbox / defect monitor — always active; skips pushes when no bot URL
-		// is available (URL is pushed by the bot on /session start, not at load time)
-		_hostObject.AddComponent<DefectMonitor>();
+		// Hotbox / defect monitor — WIP, opt-in via UMM settings. When disabled we
+		// don't even attach the component, so it costs nothing (no timer, no scans).
+		// Toggling the setting therefore requires a mod reload to take effect.
+		if (Settings.DefectDetectorEnabled)
+			_hostObject.AddComponent<DefectMonitor>();
 
-		// Car-miles stats tracker — polls every 5 s, flushes to bot every 60 s.
+		// Car-miles stats tracker — polls every 15 s, flushes to bot every 60 s.
 		// Host-only; exits silently when no bot URL is available.
 		_hostObject.AddComponent<StatsTracker>();
 

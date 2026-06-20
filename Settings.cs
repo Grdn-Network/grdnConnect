@@ -37,6 +37,15 @@ public class Settings : UnityModManager.ModSettings, IDrawable
     [Draw("Interchange Mode — track car-miles and role labels for hub-and-spoke operations")]
     public bool InterchangeMode = false;
 
+    // ── Diagnostics / performance ─────────────────────────────────────────────
+    // Both default OFF to keep per-frame and disk-I/O cost at zero during ops.
+
+    [Draw("Defect Detector (WIP) — experimental hot box / derailment / dragging-equipment voice alerts. Scans every train on a timer, so leave OFF unless testing. Toggle requires a mod reload.")]
+    public bool DefectDetectorEnabled = false;
+
+    [Draw("Verbose Logging — extra per-job / per-request diagnostic logging. Leave OFF during ops to avoid log spam and main-thread disk I/O. Errors and warnings are always logged.")]
+    public bool VerboseLogging = false;
+
     public override void Save(UnityModManager.ModEntry modEntry)
     {
         UnityModManager.ModSettings.Save<Settings>(this, modEntry);
