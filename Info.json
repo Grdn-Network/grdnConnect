@@ -8,6 +8,7 @@
     "AssemblyName": "GRDNConnect.dll",
     "EntryMethod": "Main.Load",
     "HomePage": "https://github.com/Grdn-Network/grdnConnect",
+    "Repository": "https://github.com/Grdn-Network/grdnConnect/releases/latest/download/repository.json",
     "Requirements": [ "CommsRadioAPI" ],
     "LoadAfter": [ "DVMultiplayer" ],
     "MultiplayerCompatibility": "All",

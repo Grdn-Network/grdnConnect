@@ -92,10 +92,32 @@ jobs:
           Copy-Item "Info.json" "release\GRDNConnect\"
           Compress-Archive -Path "release\GRDNConnect" -DestinationPath "GRDNConnect-${{ github.ref_name }}.zip"
 
+      - name: Generate repository.json (UMM auto-update manifest)
+        shell: pwsh
+        run: |
+          # UMM checks the URL in Info.json's "Repository" field and compares the
+          # listed Version against the installed one. We attach this manifest to every
+          # release, so Info.json points at releases/latest/download/repository.json.
+          $version = "${{ github.ref_name }}".TrimStart('v')
+          $zipUrl  = "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/GRDNConnect-${{ github.ref_name }}.zip"
+          $manifest = [ordered]@{
+            Releases = @(
+              [ordered]@{
+                Id          = "GRDNConnect"
+                Version     = $version
+                DownloadUrl = $zipUrl
+              }
+            )
+          }
+          $manifest | ConvertTo-Json -Depth 5 | Set-Content repository.json -Encoding utf8NoBOM
+          Write-Host "repository.json:"; Get-Content repository.json
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           name: "GRDNConnect ${{ github.ref_name }}"
-          files: "GRDNConnect-${{ github.ref_name }}.zip"
+          files: |
+            GRDNConnect-${{ github.ref_name }}.zip
+            repository.json
           generate_release_notes: true
           fail_on_unmatched_files: true
