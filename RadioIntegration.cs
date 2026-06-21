@@ -117,6 +117,10 @@ public static class RadioIntegration
     // 0 = pending, 1 = success, 2 = failure
     internal static int RadioResult = 0;
 
+    // Specific outcome message for the LCD (e.g. "NO LINK", "Join a VC"), derived
+    // from the bot's /radio-change "status" field. Empty → fall back to generic text.
+    internal static string RadioResultMessage = "";
+
     internal static void OnChannelSelected(string vcId)
     {
         if (_host != null)
@@ -177,12 +181,33 @@ public static class RadioIntegration
 
             if (req.error == null)
             {
-                RadioResult = 1;
-                Main.ModEntry.Logger.Log($"[GRDNConnect] Radio push OK → vcId={vcId}");
+                // Bot replies 200 with a "status" telling us what actually happened
+                // (moved / not_linked / not_in_voice / ...). A 200 alone does NOT mean
+                // someone was moved — read the status. An older bot that doesn't send a
+                // status is treated as success (HTTP 200 = request accepted) so the two
+                // can be deployed in any order without a false "Switch failed".
+                string status = ExtractStatus(req.downloadHandler.text);
+                if (string.IsNullOrEmpty(status))
+                {
+                    RadioResult = 1;
+                    RadioResultMessage = "Switched!";
+                    Main.LogVerbose($"[GRDNConnect] Radio push OK (legacy bot, no status) → vcId={vcId}");
+                }
+                else
+                {
+                    bool moved = status == "moved" || status == "already_there";
+                    RadioResultMessage = MapStatusMessage(status);
+                    RadioResult = moved ? 1 : 2;
+                    if (moved)
+                        Main.LogVerbose($"[GRDNConnect] Radio push OK ({status}) → vcId={vcId}");
+                    else
+                        Main.ModEntry.Logger.Log($"[GRDNConnect] Radio push: bot reported '{status}' for vcId={vcId}");
+                }
             }
             else
             {
                 RadioResult = 2;
+                RadioResultMessage = req.responseCode == 0 ? "Bot offline" : "Switch error";
                 Main.ModEntry.Logger.Warning($"[GRDNConnect] Radio push failed ({req.responseCode}): {req.error}");
             }
         }
@@ -312,6 +337,30 @@ public static class RadioIntegration
         int o = json.IndexOf('"', c);         if (o < 0) return null;
         int e = json.IndexOf('"', o + 1);     if (e < 0) return null;
         return json.Substring(o + 1, e - o - 1);
+    }
+
+    // Pulls the "status" field out of the bot's /radio-change reply.
+    private static string ExtractStatus(string json)
+    {
+        if (string.IsNullOrEmpty(json)) return "";
+        int i = json.IndexOf("\"status\"", StringComparison.Ordinal);
+        return i < 0 ? "" : (ExtractString(json, i + 8) ?? "");
+    }
+
+    // Maps a bot status code to a short LCD message. Keep in sync with the bot's
+    // /radio-change handler and the message reference in the docs.
+    private static string MapStatusMessage(string status)
+    {
+        switch (status)
+        {
+            case "moved":         return "Switched!";
+            case "already_there": return "Already set";
+            case "not_linked":    return "NO LINK";
+            case "not_in_voice":  return "Join a VC";
+            case "no_member":     return "Not in guild";
+            case "no_match":      return "No crew match";
+            default:              return "Switch failed";
+        }
     }
 
     internal static string Esc(string s) =>
@@ -502,10 +551,13 @@ public class GRDNRadioState : AStateBehaviour
     {
         if (sent)
         {
-            // Result not yet known — show pending; OnUpdate will transition once the flag is set
+            // Result not yet known — show pending; OnUpdate transitions once it arrives.
+            // Prefer the specific message from the bot ("NO LINK", etc.) when present.
             int r = RadioIntegration.RadioResult;
-            if (r == 1) return "Switched!";
-            if (r == 2) return "Switch failed!";
+            if (r != 0)
+                return string.IsNullOrEmpty(RadioIntegration.RadioResultMessage)
+                    ? (r == 1 ? "Switched!" : "Switch failed!")
+                    : RadioIntegration.RadioResultMessage;
             return "Switching...";
         }
         if (!browsing)  return channels.Count > 0 ? $"{channels.Count} ch. ready" : "No channels";
@@ -563,7 +615,8 @@ public class GRDNRadioState : AStateBehaviour
                     return new GRDNRadioState(ch, _onSelected, 0, false, true);
 
                 int idx = Math.Min(_index, ch.Count - 1);
-                RadioIntegration.RadioResult = 0; // clear before firing
+                RadioIntegration.RadioResult = 0;          // clear before firing
+                RadioIntegration.RadioResultMessage = "";
                 _onSelected?.Invoke(ch[idx].vcId);
                 return new GRDNRadioState(ch, _onSelected, idx, sent: true, browsing: false);
 
