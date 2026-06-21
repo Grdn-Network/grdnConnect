@@ -136,6 +136,12 @@ public class GRDNConnectBehaviour : MonoBehaviour
 #endif
 	}
 
+	// Cached MultiplayerAPI type. The assembly walk + GetExportedTypes() below is the
+	// expensive part, and IsHostOrSingleplayer() runs per HTTP request and per StatsTracker
+	// poll. The type never changes once loaded, so resolve it once. Only a positive result
+	// is cached, so if DVMP loads after our first call we still pick it up on a later call.
+	private static Type _mpApiType;
+
 	/// <summary>
 	/// Returns true if this game instance is the server host, or if DVMP is not loaded (singleplayer).
 	/// Uses reflection so GRDNConnect has zero compile-time dependency on dv-multiplayer.
@@ -144,64 +150,59 @@ public class GRDNConnectBehaviour : MonoBehaviour
 	{
 		try
 		{
-			foreach (Assembly asm in AppDomain.CurrentDomain.GetAssemblies())
+			Type apiType = _mpApiType;
+			if (apiType == null)
 			{
-				// Only inspect assemblies that look like the multiplayer mod
-				string asmName = asm.GetName().Name;
-				if (!asmName.StartsWith("Multiplayer", StringComparison.OrdinalIgnoreCase))
-					continue;
-
-				// Search for the MultiplayerAPI type (namespace may vary across DVMP versions)
-				Type apiType = null;
-				foreach (Type t in asm.GetExportedTypes())
+				foreach (Assembly asm in AppDomain.CurrentDomain.GetAssemblies())
 				{
-					if (t.Name == "MultiplayerAPI")
-					{
-						apiType = t;
-						break;
-					}
-				}
-				if (apiType == null) continue;
+					// Only inspect assemblies that look like the multiplayer mod
+					if (!asm.GetName().Name.StartsWith("Multiplayer", StringComparison.OrdinalIgnoreCase))
+						continue;
 
-				// IsMultiplayerLoaded == false → singleplayer even with mod installed
-				PropertyInfo isLoadedProp = apiType.GetProperty("IsMultiplayerLoaded",
-					BindingFlags.Public | BindingFlags.Static);
-				if (isLoadedProp != null)
-				{
-					bool isLoaded = (bool)isLoadedProp.GetValue(null);
-					if (!isLoaded) return true; // singleplayer session
+					// Search for the MultiplayerAPI type (namespace may vary across DVMP versions)
+					foreach (Type t in asm.GetExportedTypes())
+						if (t.Name == "MultiplayerAPI") { apiType = t; break; }
+					if (apiType != null) break;
 				}
 
-				// Prefer Instance.IsHost / Instance.IsSinglePlayer (cleaner API)
-				PropertyInfo instanceProp = apiType.GetProperty("Instance",
-					BindingFlags.Public | BindingFlags.Static);
-				if (instanceProp != null)
-				{
-					object instance = instanceProp.GetValue(null);
-					if (instance != null)
-					{
-						Type instanceType = instance.GetType();
-						bool? isSingle = instanceType.GetProperty("IsSinglePlayer")?.GetValue(instance) as bool?;
-						if (isSingle == true) return true;
-						bool? isHost = instanceType.GetProperty("IsHost")?.GetValue(instance) as bool?;
-						if (isHost.HasValue) return isHost.Value;
-					}
-				}
-
-				// Fallback: Server != null → hosting
-				PropertyInfo serverProp = apiType.GetProperty("Server",
-					BindingFlags.Public | BindingFlags.Static);
-				if (serverProp != null)
-				{
-					return serverProp.GetValue(null) != null;
-				}
-
-				// DVMP found but API shape unrecognised — refuse requests to be safe
-				return false;
+				// DVMP assembly/type not present → singleplayer
+				if (apiType == null) return true;
+				_mpApiType = apiType; // cache once found
 			}
 
-			// DVMP assembly not loaded at all — singleplayer
-			return true;
+			// IsMultiplayerLoaded == false → singleplayer even with mod installed
+			PropertyInfo isLoadedProp = apiType.GetProperty("IsMultiplayerLoaded",
+				BindingFlags.Public | BindingFlags.Static);
+			if (isLoadedProp != null)
+			{
+				bool isLoaded = (bool)isLoadedProp.GetValue(null);
+				if (!isLoaded) return true; // singleplayer session
+			}
+
+			// Prefer Instance.IsHost / Instance.IsSinglePlayer (cleaner API)
+			PropertyInfo instanceProp = apiType.GetProperty("Instance",
+				BindingFlags.Public | BindingFlags.Static);
+			if (instanceProp != null)
+			{
+				object instance = instanceProp.GetValue(null);
+				if (instance != null)
+				{
+					Type instanceType = instance.GetType();
+					bool? isSingle = instanceType.GetProperty("IsSinglePlayer")?.GetValue(instance) as bool?;
+					if (isSingle == true) return true;
+					bool? isHost = instanceType.GetProperty("IsHost")?.GetValue(instance) as bool?;
+					if (isHost.HasValue) return isHost.Value;
+				}
+			}
+
+			// Fallback: Server != null → hosting
+			PropertyInfo serverProp = apiType.GetProperty("Server",
+				BindingFlags.Public | BindingFlags.Static);
+			if (serverProp != null)
+				return serverProp.GetValue(null) != null;
+
+			// DVMP found but API shape unrecognised — refuse requests to be safe
+			return false;
 		}
 		catch
 		{

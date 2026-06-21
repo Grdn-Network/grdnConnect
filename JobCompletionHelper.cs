@@ -49,7 +49,7 @@ public static class JobCompletionHelper
 				// Off by default — opt-in via UMM settings.
 				if (Main.Settings.RelaxedJobCompletion)
 				{
-					Main.ModEntry.Logger.Log($"[GRDNConnect] Relaxed mode: attempting force-complete for {jobId}");
+					Main.LogVerbose($"[GRDNConnect] Relaxed mode: attempting force-complete for {jobId}");
 					if (TryForceCompleteRelaxed(instance, currentJob))
 					{
 						Pay(wage, jobId);
@@ -125,7 +125,7 @@ public static class JobCompletionHelper
 					(dt.GetField("currentCarsFullyOnTrack", bf)?.GetValue(dest) as System.Collections.IList)?.Add(car);
 				}
 
-				Main.ModEntry.Logger.Log($"[GRDNConnect] Relaxed: spotted {car.ID} → {dest?.ID?.FullDisplayID ?? "?"}");
+				Main.LogVerbose($"[GRDNConnect] Relaxed: spotted {car.ID} → {dest?.ID?.FullDisplayID ?? "?"}");
 			}
 
 			JobState val = mgr.TryToCompleteAJob(job);
@@ -198,11 +198,11 @@ public static class JobCompletionHelper
 
 					object[] args = m.GetParameters().Length > 0 ? new object[] { job } : null;
 					m.Invoke(jcc, args);
-					Main.ModEntry.Logger.Log($"[GRDNConnect] Chain advanced: {jccType.Name}.{methodName}({job.ID})");
+					Main.LogVerbose($"[GRDNConnect] Chain advanced: {jccType.Name}.{methodName}({job.ID})");
 					return;
 				}
 				// Controller found but no method matched — continue to GO fallback
-				Main.ModEntry.Logger.Warning($"[GRDNConnect] Chain advance: {jcc.GetType().Name} found but no handler method matched for {job.ID}");
+				Main.LogVerbose($"[GRDNConnect] Chain advance: {jcc.GetType().Name} found but no handler method matched for {job.ID}");
 			}
 
 			// ── Fallback: get the chain GameObject and walk its components ────────────
@@ -233,7 +233,7 @@ public static class JobCompletionHelper
 
 			if (chainGO == null)
 			{
-				Main.ModEntry.Logger.Warning($"[GRDNConnect] Chain advance: no chain controller or chainGO found on {job.ID}");
+				Main.LogVerbose($"[GRDNConnect] Chain advance: no chain controller or chainGO found on {job.ID}");
 				return;
 			}
 
@@ -250,12 +250,12 @@ public static class JobCompletionHelper
 
 					object[] args = m.GetParameters().Length > 0 ? new object[] { job } : null;
 					m.Invoke(comp, args);
-					Main.ModEntry.Logger.Log($"[GRDNConnect] Chain advanced (GO scan): {t.Name}.{methodName}({job.ID})");
+					Main.LogVerbose($"[GRDNConnect] Chain advanced (GO scan): {t.Name}.{methodName}({job.ID})");
 					return;
 				}
 			}
 
-			Main.ModEntry.Logger.Warning($"[GRDNConnect] Chain advance: no handler method found for {job.ID}");
+			Main.LogVerbose($"[GRDNConnect] Chain advance: no handler method found for {job.ID}");
 		}
 		catch (Exception ex)
 		{
@@ -338,7 +338,7 @@ public static class JobCompletionHelper
 				}
 
 				if (released)
-					Main.ModEntry.Logger.Log($"[GRDNConnect] Released handbrake on car {tc.ID}");
+					Main.LogVerbose($"[GRDNConnect] Released handbrake on car {tc.ID}");
 				else
 					Main.ModEntry.Logger.Warning($"[GRDNConnect] Could not find handbrake field on {tc.ID} — brake system type: {bs?.GetType().Name ?? "?"}");
 			}
