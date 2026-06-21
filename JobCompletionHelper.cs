@@ -56,13 +56,14 @@ public static class JobCompletionHelper
 						TryAdvanceJobChain(currentJob);
 						return (true, null, wage);
 					}
-					return (false, "Cars are not yet at the destination track (relaxed completion also failed)", 0f);
+					return (false, "Cars are not at the destination track (relaxed completion also failed)" + DiagSuffix(currentJob), 0f);
 				}
 
-				Debug.LogWarning((object)$"[GRDNConnect] TryToCompleteAJob returned {val} for {jobId}.");
-				string reason = (int)val == 1
+				string reason = ((int)val == 1
 					? "Cars are not yet spotted to the required destination track"
-					: $"Job validator returned state '{val}' — cars may not be in the correct position";
+					: $"Job validator returned state '{val}' — cars may not be in the correct position")
+					+ DiagSuffix(currentJob);
+				Debug.LogWarning((object)$"[GRDNConnect] /complete {jobId} failed (state {val}): {reason}");
 				return (false, reason, 0f);
 			}
 
@@ -347,6 +348,48 @@ public static class JobCompletionHelper
 		{
 			Main.ModEntry.Logger.Warning("[GRDNConnect] ReleaseHandbrakesForJob: " + ex.Message);
 		}
+	}
+
+	// Best-effort "why didn't it complete" — lists job cars whose current track
+	// doesn't match their task's destination track. Returns null if undeterminable.
+	private static string BuildCompletionDiagnostic(Job job)
+	{
+		try
+		{
+			const System.Reflection.BindingFlags bf =
+				System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
+				System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.FlattenHierarchy;
+			Type jt = ((object)job).GetType();
+			object taskList = jt.GetField("tasks", bf)?.GetValue(job)
+			               ?? jt.GetProperty("tasks", bf)?.GetValue(job);
+			if (!(taskList is System.Collections.IEnumerable tasks)) return null;
+
+			var moves = new List<(Car, Track)>();
+			CollectCarMoves(tasks, bf, moves);
+
+			// Keep the LAST destination per car (where it should end up).
+			var lastDest = new Dictionary<string, (Car car, Track dest)>();
+			foreach (var (car, dest) in moves)
+				if (car?.ID != null) lastDest[car.ID] = (car, dest);
+
+			var bad = new List<string>();
+			foreach (var kv in lastDest.Values)
+			{
+				string cur  = kv.car.CurrentTrack?.ID?.FullDisplayID;
+				string want = kv.dest?.ID?.FullDisplayID;
+				if (!string.Equals(cur, want, StringComparison.Ordinal))
+					bad.Add($"{kv.car.ID} needs {want ?? "?"} (on {cur ?? "?"})");
+			}
+			return bad.Count == 0 ? null : $"{bad.Count} car(s) not spotted: " + string.Join("; ", bad);
+		}
+		catch { return null; }
+	}
+
+	// " — <diagnostic>" or "" so callers can append it to an error/log verbatim.
+	private static string DiagSuffix(Job job)
+	{
+		string d = BuildCompletionDiagnostic(job);
+		return string.IsNullOrEmpty(d) ? "" : " — " + d;
 	}
 
 	private static void Pay(float wage, string jobId)
