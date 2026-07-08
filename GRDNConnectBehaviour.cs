@@ -24,7 +24,7 @@ public class GRDNConnectBehaviour : MonoBehaviour
 
 	/// <summary>
 	/// The bot's base URL for this session.
-	/// Priority: session-config push → UMM Settings → hardcoded default (GRDNDefaults.cs).
+	/// Priority: session-config push → UMM Settings → public default (GRDNDefaults.BotUrl).
 	/// </summary>
 	internal static string ActiveBotUrl =>
 		!string.IsNullOrEmpty(_sessionBotUrl)           ? _sessionBotUrl           :
@@ -33,12 +33,13 @@ public class GRDNConnectBehaviour : MonoBehaviour
 
 	/// <summary>
 	/// The bot's shared secret for this session.
-	/// Priority: session-config push → UMM Settings → hardcoded default (GRDNDefaults.cs).
+	/// Priority: session-config push → UMM Settings → none.
+	/// No secret is baked into the mod; it arrives at runtime via /session-config.
 	/// </summary>
 	internal static string ActiveBotSecret =>
 		!string.IsNullOrEmpty(_sessionBotSecret)        ? _sessionBotSecret        :
 		!string.IsNullOrEmpty(Main.Settings.BotSecret)  ? Main.Settings.BotSecret  :
-		GRDNDefaults.BotSecret;
+		"";
 
 	private void Awake()
 	{
