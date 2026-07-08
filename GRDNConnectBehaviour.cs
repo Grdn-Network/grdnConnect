@@ -11,7 +11,7 @@ using DV.ThingTypes;
 using UnityEngine;
 using UnityEngine.Networking;
 
-public class GRDNConnectBehaviour : MonoBehaviour
+public partial class GRDNConnectBehaviour : MonoBehaviour
 {
 	private HttpListener _listener;
 	private static GRDNConnectBehaviour _instance;
@@ -507,9 +507,20 @@ public class GRDNConnectBehaviour : MonoBehaviour
 			json = streamReader.ReadToEnd();
 		}
 		string jobId = ExtractJsonString(json, "jobId");
+		string trainNumber = ExtractJsonString(json, "trainNumber");
+		// No explicit job: resolve the job on the caller's train consist (Slice 1).
+		if (string.IsNullOrEmpty(jobId) && !string.IsNullOrEmpty(trainNumber))
+		{
+			jobId = ResolveJobIdForTrain(trainNumber);
+			if (string.IsNullOrEmpty(jobId))
+			{
+				SendJson(res, 404, "{\"ok\":false,\"error\":\"No active job found on train " + Escape(trainNumber) + " consist\"}");
+				return;
+			}
+		}
 		if (string.IsNullOrEmpty(jobId))
 		{
-			SendJson(res, 400, "{\"ok\":false,\"error\":\"Missing jobId\"}");
+			SendJson(res, 400, "{\"ok\":false,\"error\":\"Missing jobId or trainNumber\"}");
 			return;
 		}
 
