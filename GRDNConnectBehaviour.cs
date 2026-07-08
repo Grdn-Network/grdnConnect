@@ -289,6 +289,10 @@ public partial class GRDNConnectBehaviour : MonoBehaviour
 			{
 				HandleCompleteJob(ctx.Request, ctx.Response);
 			}
+			else if (ctx.Request.HttpMethod == "POST" && text == "/activate-job")
+			{
+				HandleActivateJob(ctx.Request, ctx.Response);
+			}
 			else if (ctx.Request.HttpMethod == "POST" && text == "/session-config")
 			{
 				HandleSessionConfig(ctx.Request, ctx.Response);

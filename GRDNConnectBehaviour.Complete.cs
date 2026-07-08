@@ -6,7 +6,10 @@
 // so this never reads the caller's live loco (a player may step out of the cab).
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
+using System.Net;
+using System.Text;
 using DV.Logic.Job;
 using DV.ThingTypes;
 using UnityEngine;
@@ -92,5 +95,43 @@ public partial class GRDNConnectBehaviour
 			Main.ModEntry.Logger.Warning("[GRDNConnect] ResolveJobIdForTrain: " + ex.Message);
 			return null;
 		}
+	}
+
+	// ── POST /activate-job ────────────────────────────────────────────────────
+	// Body: { jobId } or { trainNumber }. Starts/activates the job on that train's
+	// consist. Resolution mirrors /complete-job. The actual activation lives in
+	// JobCompletionHelper.TryActivateJob and NEEDS IN-GAME VERIFICATION of DV's
+	// take-job method.
+	private void HandleActivateJob(HttpListenerRequest req, HttpListenerResponse res)
+	{
+		string json;
+		using (var sr = new StreamReader(req.InputStream, Encoding.UTF8))
+			json = sr.ReadToEnd();
+
+		string jobId = ExtractJsonString(json, "jobId");
+		string trainNumber = ExtractJsonString(json, "trainNumber");
+		if (string.IsNullOrEmpty(jobId) && !string.IsNullOrEmpty(trainNumber))
+		{
+			jobId = ResolveJobIdForTrain(trainNumber);
+			if (string.IsNullOrEmpty(jobId))
+			{
+				SendJson(res, 404, "{\"ok\":false,\"error\":\"No job found on train " + Escape(trainNumber) + " consist\"}");
+				return;
+			}
+		}
+		if (string.IsNullOrEmpty(jobId))
+		{
+			SendJson(res, 400, "{\"ok\":false,\"error\":\"Missing jobId or trainNumber\"}");
+			return;
+		}
+
+		var (ok, error) = JobCompletionHelper.TryActivateJob(jobId);
+		var sb = new StringBuilder();
+		sb.Append("{");
+		sb.Append($"\"ok\":{(ok ? "true" : "false")}");
+		sb.Append($",\"jobId\":\"{Escape(jobId)}\"");
+		if (!string.IsNullOrEmpty(error)) sb.Append($",\"error\":\"{Escape(error)}\"");
+		sb.Append("}");
+		SendJson(res, ok ? 200 : 409, sb.ToString());
 	}
 }

@@ -415,4 +415,54 @@ public static class JobCompletionHelper
 	{
 		return ((job != null) ? ((object)job.State).ToString() : null) ?? "Unknown";
 	}
+
+	/// <summary>
+	/// Best-effort "start/activate" of a job by ID: transitions it to the taken /
+	/// in-progress state so the crew's job is active. DV has no clean public
+	/// take-job API, so this reflects for a likely method on the Job and returns a
+	/// clear error if none is found. NEEDS IN-GAME VERIFICATION of the method name.
+	/// </summary>
+	public static (bool ok, string error) TryActivateJob(string jobId)
+	{
+		try
+		{
+			JobsManager instance = SingletonBehaviour<JobsManager>.Instance;
+			if ((UnityEngine.Object)(object)instance == (UnityEngine.Object)null)
+				return (false, "JobsManager is not available — is the game in a loaded save?");
+
+			foreach (Job job in instance.currentJobs)
+			{
+				if (job.ID != jobId) continue;
+
+				string state = GetJobState(job);
+				if (state.IndexOf("progress", StringComparison.OrdinalIgnoreCase) >= 0
+				 || state.IndexOf("taken", StringComparison.OrdinalIgnoreCase) >= 0)
+					return (true, null); // already active
+
+				const System.Reflection.BindingFlags bf =
+					System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
+					System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.FlattenHierarchy;
+				Type jt = ((object)job).GetType();
+
+				foreach (var name in new[] { "TakeJob", "StartJob", "TakeJobIfPossible", "SetJobTaken" })
+				{
+					var m = jt.GetMethod(name, bf, null, new Type[] { typeof(bool) }, null)
+					     ?? jt.GetMethod(name, bf, null, Type.EmptyTypes, null);
+					if (m == null) continue;
+					object[] args = m.GetParameters().Length > 0 ? new object[] { false } : null;
+					m.Invoke(job, args);
+					Main.LogVerbose($"[GRDNConnect] Activated job {jobId} via Job.{name}");
+					return (true, null);
+				}
+
+				return (false, "No DV job-start method found (needs in-game verification of the take-job API)");
+			}
+			return (false, "Job not found — it may already be active, completed, or the ID is wrong");
+		}
+		catch (Exception ex)
+		{
+			Debug.LogError((object)("[GRDNConnect] TryActivateJob threw: " + ex.Message));
+			return (false, ex.Message);
+		}
+	}
 }
