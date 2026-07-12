@@ -52,7 +52,7 @@ public partial class GRDNConnectBehaviour
 	// Resolves the job attached to the consist of the loco with this train number.
 	// Returns the jobId, or null if no matching loco/job. Uses the same car-GUID
 	// matching as /locos so the result is consistent with the train board.
-	private string ResolveJobIdForTrain(string trainNumber)
+	internal string ResolveJobIdForTrain(string trainNumber)
 	{
 		if (string.IsNullOrEmpty(trainNumber)) return null;
 		try
@@ -95,6 +95,54 @@ public partial class GRDNConnectBehaviour
 			Main.ModEntry.Logger.Warning("[GRDNConnect] ResolveJobIdForTrain: " + ex.Message);
 			return null;
 		}
+	}
+
+	// Resolve the job on the consist that this car belongs to (any car in it).
+	// Used by the in-game chat command, which has the sender's OccupiedCar directly.
+	internal string ResolveJobIdForConsist(TrainCar anyCar)
+	{
+		if (anyCar?.trainset?.cars == null) return null;
+		try
+		{
+			var carGuidToJobs = new Dictionary<string, List<Job>>();
+			var activeJobs = JobCompletionHelper.GetCurrentJobsForApi();
+			if (activeJobs != null)
+				foreach (var job in activeJobs)
+					foreach (var guid in GetCarGuidsFromJob(job))
+					{
+						if (!carGuidToJobs.TryGetValue(guid, out var jl))
+							carGuidToJobs[guid] = jl = new List<Job>();
+						if (!jl.Contains(job)) jl.Add(job);
+					}
+
+			foreach (var car in anyCar.trainset.cars)
+			{
+				var guid = car?.logicCar?.carGuid;
+				if (string.IsNullOrEmpty(guid)) continue;
+				if (carGuidToJobs.TryGetValue(guid, out var jobs) && jobs.Count > 0)
+					return jobs[0].ID;
+			}
+			return null;
+		}
+		catch (Exception ex)
+		{
+			Main.ModEntry.Logger.Warning("[GRDNConnect] ResolveJobIdForConsist: " + ex.Message);
+			return null;
+		}
+	}
+
+	// Train number for a consist: trailing digits of the first loco in it.
+	internal string TrainNumberOfConsist(TrainCar anyCar)
+	{
+		if (anyCar == null) return null;
+		if (anyCar.trainset?.cars != null)
+			foreach (var c in anyCar.trainset.cars)
+				if (c != null && c.IsLoco)
+				{
+					var n = ExtractTrainNumber(c.ID);
+					if (!string.IsNullOrEmpty(n)) return n;
+				}
+		return ExtractTrainNumber(anyCar.ID);
 	}
 
 	// ── POST /activate-job ────────────────────────────────────────────────────

@@ -79,6 +79,18 @@
     </Reference>
   </ItemGroup>
 
+  <!-- MultiplayerAPI (dvmp) — optional compile dep for in-game chat commands.
+       Defines DVMP_API and adds the reference only when the DLL is present in lib/. -->
+  <PropertyGroup Condition="Exists('$(MSBuildProjectDirectory)\lib\MultiplayerAPI.dll')">
+    <DefineConstants>$(DefineConstants);DVMP_API</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup Condition="Exists('$(MSBuildProjectDirectory)\lib\MultiplayerAPI.dll')">
+    <Reference Include="MultiplayerAPI">
+      <HintPath>lib\MultiplayerAPI.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+  </ItemGroup>
+
   <!-- Facepunch.Steamworks: NO compile-time reference needed.
        Steam ID is obtained at runtime via reflection — the DLL is always
        loaded by DV itself, so no lib/ copy is required. -->

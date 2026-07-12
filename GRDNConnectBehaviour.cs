@@ -69,6 +69,10 @@ public partial class GRDNConnectBehaviour : MonoBehaviour
 			Main.ModEntry.Logger.Log($"[GRDNConnect] Steam identity OK — id={steamId} name={steamName}");
 		// Warning already printed inside GetLocalSteamInfo() if steamId == 0.
 #endif
+
+#if DVMP_API
+		MultiplayerChatCommands.TryInit(this);
+#endif
 	}
 
 	/// <summary>
