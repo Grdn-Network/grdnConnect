@@ -22,7 +22,7 @@ public partial class GRDNConnectBehaviour
 	private const float LOCO_CACHE_TTL = 2f;
 
 	// All locomotives, cached briefly so repeated resolves don't re-scan the scene.
-	private static TrainCar[] GetLocosCached()
+	internal static TrainCar[] GetLocosCached()
 	{
 		if (_locoCache != null && Time.realtimeSinceStartup - _locoCacheTime < LOCO_CACHE_TTL)
 			return _locoCache;

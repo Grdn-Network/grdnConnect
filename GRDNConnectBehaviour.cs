@@ -905,7 +905,7 @@ public partial class GRDNConnectBehaviour : MonoBehaviour
 
 			// ── NEW APPROACH: car → logicCar → Job field scan ────────────────────
 			sb.AppendLine("\n=== NEW APPROACH: logicCar field scan ===");
-			TrainCar[] allCars = UnityEngine.Object.FindObjectsOfType<TrainCar>();
+			TrainCar[] allCars = GetLocosCached();
 			foreach (var loco in allCars)
 			{
 				if (!loco.IsLoco) continue;
@@ -993,7 +993,7 @@ public partial class GRDNConnectBehaviour : MonoBehaviour
 				Main.LogVerbose($"[GRDNConnect] /locos: {carGuidToJobs.Count} car GUID(s) mapped");
 			}
 
-			TrainCar[] allCars = UnityEngine.Object.FindObjectsOfType<TrainCar>();
+			TrainCar[] allCars = GetLocosCached();
 			foreach (var loco in allCars)
 			{
 				if (!loco.IsLoco) continue;
