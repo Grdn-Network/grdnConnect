@@ -27,7 +27,7 @@ public class StatsTracker : MonoBehaviour
     private const float FLUSH_SEC = 60f;   // push-to-bot interval
 
     // Metres per mile — used to convert accumulated metres to miles
-    private const float M_PER_MILE  = 1609.344f;
+    private const float M_PER_KM  = 1000f;
 
     // Minimum speed to register movement (filters out physics drift when "stopped")
     private const float MIN_SPEED_MS = 0.5f;   // ~1.8 km/h
@@ -72,7 +72,7 @@ public class StatsTracker : MonoBehaviour
                 if (speedMs < MIN_SPEED_MS) continue;
 
                 // Δmiles = speed(m/s) × Δt(s) / m_per_mile  (loco distance only, no consist weighting)
-                float delta = speedMs * POLL_SEC / M_PER_MILE;
+                float delta = speedMs * POLL_SEC / M_PER_KM;
 
                 if (!_accumulated.TryGetValue(train, out float prev)) prev = 0f;
                 _accumulated[train] = prev + delta;
