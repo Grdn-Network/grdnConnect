@@ -217,11 +217,11 @@ public class DefectMonitor : MonoBehaviour
 
                     string train    = ExtractNumber(loco.ID);
                     int    carCount = loco.trainset?.cars?.Count ?? 1;
-                    int    speedMph = Mathf.RoundToInt(Mathf.Abs(loco.GetForwardSpeed()) * 2.237f);
+                    int    speedKph = Mathf.RoundToInt(Mathf.Abs(loco.GetForwardSpeed()) * 3.6f);
 
-                    string msg          = BuildConsistMessage(train, carCount, speedMph);
-                    string consistDetail = $"{carCount} {speedMph}";  // bot uses this to stitch clips
-                    Main.ModEntry.Logger.Log($"[Defect] Consist check — train {train}, {carCount} cars, {speedMph} mph");
+                    string msg          = BuildConsistMessage(train, carCount, speedKph);
+                    string consistDetail = $"{carCount} {speedKph}";  // bot uses this to stitch clips
+                    Main.ModEntry.Logger.Log($"[Defect] Consist check — train {train}, {carCount} cars, {speedKph} km/h");
                     StartCoroutine(PostAlert(pushUrl, train, "Consist Check", consistDetail, msg));
                 }
             }
@@ -245,11 +245,11 @@ public class DefectMonitor : MonoBehaviour
         return $"Attention. Train, {trainSpoken}. G R D N detector. {body} {action}. End of message.";
     }
 
-    private static string BuildConsistMessage(string train, int carCount, int speedMph)
+    private static string BuildConsistMessage(string train, int carCount, int speedKph)
     {
         string trainSpoken = SpeakDigits(train);
         string cars        = carCount == 1 ? "one car" : $"{carCount} cars";
-        string speed       = speedMph > 0 ? $" Speed, {speedMph}." : "";
+        string speed       = speedKph > 0 ? $" Speed, {speedKph}." : "";
         return $"Train, {trainSpoken}. G R D N detector. No defects detected. {cars}.{speed} End of message.";
     }
 
