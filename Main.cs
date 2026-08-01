@@ -32,11 +32,12 @@ public class Main
 		Object.DontDestroyOnLoad((Object)(object)_hostObject);
 		_hostObject.AddComponent<GRDNConnectBehaviour>();
 
-		// Hotbox / defect monitor — WIP, opt-in via UMM settings. When disabled we
-		// don't even attach the component, so it costs nothing (no timer, no scans).
-		// Toggling the setting therefore requires a mod reload to take effect.
-		if (Settings.DefectDetectorEnabled)
-			_hostObject.AddComponent<DefectMonitor>();
+		// Hotbox / defect monitor — SHELVED. The defect-detection concept was scrapped,
+		// so the component is never attached: no timer, no scene scans, no alerts fire.
+		// DefectMonitor.cs and the Settings toggle are kept intact so it can be revived
+		// later; re-enable by restoring the guarded AddComponent below.
+		//   if (Settings.DefectDetectorEnabled)
+		//       _hostObject.AddComponent<DefectMonitor>();
 
 		// Car-miles stats tracker — polls every 15 s, flushes to bot every 60 s.
 		// Host-only; exits silently when no bot URL is available.
