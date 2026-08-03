@@ -11,7 +11,7 @@ using DV.ThingTypes;
 using UnityEngine;
 using UnityEngine.Networking;
 
-public class GRDNConnectBehaviour : MonoBehaviour
+public partial class GRDNConnectBehaviour : MonoBehaviour
 {
 	private HttpListener _listener;
 	private static GRDNConnectBehaviour _instance;
@@ -68,6 +68,10 @@ public class GRDNConnectBehaviour : MonoBehaviour
 		if (steamId > 0)
 			Main.ModEntry.Logger.Log($"[GRDNConnect] Steam identity OK — id={steamId} name={steamName}");
 		// Warning already printed inside GetLocalSteamInfo() if steamId == 0.
+#endif
+
+#if DVMP_API
+		MultiplayerChatCommands.TryInit(this);
 #endif
 	}
 
@@ -289,6 +293,10 @@ public class GRDNConnectBehaviour : MonoBehaviour
 			{
 				HandleCompleteJob(ctx.Request, ctx.Response);
 			}
+			else if (ctx.Request.HttpMethod == "POST" && text == "/activate-job")
+			{
+				HandleActivateJob(ctx.Request, ctx.Response);
+			}
 			else if (ctx.Request.HttpMethod == "POST" && text == "/session-config")
 			{
 				HandleSessionConfig(ctx.Request, ctx.Response);
@@ -507,9 +515,20 @@ public class GRDNConnectBehaviour : MonoBehaviour
 			json = streamReader.ReadToEnd();
 		}
 		string jobId = ExtractJsonString(json, "jobId");
+		string trainNumber = ExtractJsonString(json, "trainNumber");
+		// No explicit job: resolve the job on the caller's train consist (Slice 1).
+		if (string.IsNullOrEmpty(jobId) && !string.IsNullOrEmpty(trainNumber))
+		{
+			jobId = ResolveJobIdForTrain(trainNumber);
+			if (string.IsNullOrEmpty(jobId))
+			{
+				SendJson(res, 404, "{\"ok\":false,\"error\":\"No active job found on train " + Escape(trainNumber) + " consist\"}");
+				return;
+			}
+		}
 		if (string.IsNullOrEmpty(jobId))
 		{
-			SendJson(res, 400, "{\"ok\":false,\"error\":\"Missing jobId\"}");
+			SendJson(res, 400, "{\"ok\":false,\"error\":\"Missing jobId or trainNumber\"}");
 			return;
 		}
 
@@ -891,7 +910,7 @@ public class GRDNConnectBehaviour : MonoBehaviour
 
 			// ── NEW APPROACH: car → logicCar → Job field scan ────────────────────
 			sb.AppendLine("\n=== NEW APPROACH: logicCar field scan ===");
-			TrainCar[] allCars = UnityEngine.Object.FindObjectsOfType<TrainCar>();
+			TrainCar[] allCars = GetLocosCached();
 			foreach (var loco in allCars)
 			{
 				if (!loco.IsLoco) continue;
@@ -979,7 +998,7 @@ public class GRDNConnectBehaviour : MonoBehaviour
 				Main.LogVerbose($"[GRDNConnect] /locos: {carGuidToJobs.Count} car GUID(s) mapped");
 			}
 
-			TrainCar[] allCars = UnityEngine.Object.FindObjectsOfType<TrainCar>();
+			TrainCar[] allCars = GetLocosCached();
 			foreach (var loco in allCars)
 			{
 				if (!loco.IsLoco) continue;

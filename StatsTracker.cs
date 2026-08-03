@@ -58,7 +58,7 @@ public class StatsTracker : MonoBehaviour
             // Clients never own the stats — only the host can see all locos
             if (!GRDNConnectBehaviour.IsHostOrSingleplayer()) continue;
 
-            var allCars = UnityEngine.Object.FindObjectsOfType<TrainCar>();
+            var allCars = GRDNConnectBehaviour.GetLocosCached();
             foreach (var loco in allCars)
             {
                 if (!loco.IsLoco) continue;

@@ -69,7 +69,7 @@ public class DefectMonitor : MonoBehaviour
             string pushUrl = GRDNConnectBehaviour.ActiveBotUrl?.TrimEnd('/');
             bool   canPost = !string.IsNullOrEmpty(pushUrl);
 
-            var allCars = UnityEngine.Object.FindObjectsOfType<TrainCar>();
+            var allCars = GRDNConnectBehaviour.GetLocosCached();
             var nowFired = new HashSet<string>();
 
             foreach (var car in allCars)
@@ -209,7 +209,7 @@ public class DefectMonitor : MonoBehaviour
             string pushUrl = GRDNConnectBehaviour.ActiveBotUrl?.TrimEnd('/');
             if (!string.IsNullOrEmpty(pushUrl))
             {
-                var allCars = UnityEngine.Object.FindObjectsOfType<TrainCar>();
+                var allCars = GRDNConnectBehaviour.GetLocosCached();
                 foreach (var loco in allCars)
                 {
                     if (!loco.IsLoco) continue;
