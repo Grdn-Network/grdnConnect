@@ -737,8 +737,13 @@ public class GRDNConnectBehaviour : MonoBehaviour
 
 		for (int attempt = 0; attempt < 40; attempt++)
 		{
-			// Already have config (from UMM settings or a prior session push)
-			if (!string.IsNullOrEmpty(ActiveBotUrl)) yield break;
+			// Already have config (from UMM settings or a prior session push).
+			// Test the SECRET, not the URL: ActiveBotUrl always resolves because it
+			// falls back to the public GRDNDefaults.BotUrl, which carries no
+			// credential, so a non-empty URL is no proof we are configured. The
+			// secret is what a client is missing, and without it every request to
+			// the bot is unauthenticated (no radio channels, no VC swapping).
+			if (!string.IsNullOrEmpty(ActiveBotSecret)) yield break;
 
 			// We're hosting or in singleplayer — bot pushes to us directly, no need to fetch
 			if (IsHostOrSingleplayer()) yield break;
