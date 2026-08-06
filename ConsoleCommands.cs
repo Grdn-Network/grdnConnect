@@ -40,6 +40,22 @@ internal static class ConsoleCommands
 		Debug.Log(report);
 		Main.ModEntry.Logger.Log(report);
 	}
+
+	[RegisterCommand("connect.reload",
+		Help = "GRDNConnect: re-read connect.cfg (bot url, secret, radio channels) without restarting the game.",
+		MinArgCount = 0, MaxArgCount = 0)]
+	public static void ReloadConfig(CommandArg[] args)
+	{
+		HostConfig.Load();
+
+		// Push the reloaded channel list into the live radio integration, otherwise
+		// the file would be read but the radio would keep the old channels.
+		GRDNConnectBehaviour.ApplySettingsChange();
+
+		string msg = $"connect.reload: connect.cfg re-read from {HostConfig.FilePath}";
+		Debug.Log(msg);
+		Main.ModEntry.Logger.Log("[GRDNConnect] " + msg);
+	}
 }
 
 #endif

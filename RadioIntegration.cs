@@ -34,7 +34,7 @@ public static class RadioIntegration
     internal static List<(string name, string vcId)> ActiveChannels =>
         _sessionChannels.Count > 0
             ? _sessionChannels
-            : ParseChannels(Main.Settings.RadioChannelsJson);
+            : ParseChannels(HostConfig.RadioChannelsJson);
 
     /// <summary>
     /// Parses the "channels" array from a /session-config JSON body and stores it.

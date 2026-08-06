@@ -24,21 +24,21 @@ public class GRDNConnectBehaviour : MonoBehaviour
 
 	/// <summary>
 	/// The bot's base URL for this session.
-	/// Priority: session-config push → UMM Settings → public default (GRDNDefaults.BotUrl).
+	/// Priority: session-config push → connect.cfg → public default (GRDNDefaults.BotUrl).
 	/// </summary>
 	internal static string ActiveBotUrl =>
 		!string.IsNullOrEmpty(_sessionBotUrl)           ? _sessionBotUrl           :
-		!string.IsNullOrEmpty(Main.Settings.BotPushUrl) ? Main.Settings.BotPushUrl :
+		!string.IsNullOrEmpty(HostConfig.BotUrl)        ? HostConfig.BotUrl        :
 		GRDNDefaults.BotUrl;
 
 	/// <summary>
 	/// The bot's shared secret for this session.
-	/// Priority: session-config push → UMM Settings → none.
+	/// Priority: session-config push → connect.cfg → none.
 	/// No secret is baked into the mod; it arrives at runtime via /session-config.
 	/// </summary>
 	internal static string ActiveBotSecret =>
 		!string.IsNullOrEmpty(_sessionBotSecret)        ? _sessionBotSecret        :
-		!string.IsNullOrEmpty(Main.Settings.BotSecret)  ? Main.Settings.BotSecret  :
+		!string.IsNullOrEmpty(HostConfig.BotSecret)     ? HostConfig.BotSecret     :
 		"";
 
 	private void Awake()
@@ -138,7 +138,7 @@ public class GRDNConnectBehaviour : MonoBehaviour
 			_instance.StartListener(newPort);
 
 #if COMMS_RADIO_API
-		RadioIntegration.UpdateChannelsFromJson(Main.Settings.RadioChannelsJson);
+		RadioIntegration.UpdateChannelsFromJson(HostConfig.RadioChannelsJson);
 #endif
 	}
 
@@ -622,17 +622,17 @@ public class GRDNConnectBehaviour : MonoBehaviour
 	private void HandleDebugBotUrl(HttpListenerResponse res)
 	{
 		string sessionUrl = _sessionBotUrl;
-		string settingsUrl = Main.Settings.BotPushUrl;
+		string settingsUrl = HostConfig.BotUrl;
 		string activeUrl = ActiveBotUrl;
 
 		// Mask secret — show first 4 chars then ****
 		string sessionSecret = _sessionBotSecret;
-		string settingsSecret = Main.Settings.BotSecret;
+		string settingsSecret = HostConfig.BotSecret;
 		string MaskSecret(string s) =>
 			string.IsNullOrEmpty(s) ? "(empty)" :
 			(s.Length <= 4 ? "****" : s.Substring(0, 4) + "****");
 
-		string source = !string.IsNullOrEmpty(sessionUrl) ? "session-config (pushed by bot)" : "UMM Settings (BotPushUrl)";
+		string source = !string.IsNullOrEmpty(sessionUrl) ? "session-config (pushed by bot)" : "connect.cfg (bot_url)";
 
 		var sb = new StringBuilder();
 		sb.Append("{");
@@ -687,8 +687,8 @@ public class GRDNConnectBehaviour : MonoBehaviour
 	// Returns null fields if no session has been started yet (client retries).
 	private void HandleClientConfig(HttpListenerResponse res)
 	{
-		string url    = _sessionBotUrl    ?? Main.Settings.BotPushUrl ?? "";
-		string secret = _sessionBotSecret ?? Main.Settings.BotSecret  ?? "";
+		string url    = _sessionBotUrl    ?? HostConfig.BotUrl    ?? "";
+		string secret = _sessionBotSecret ?? HostConfig.BotSecret ?? "";
 
 		if (string.IsNullOrEmpty(url))
 		{
@@ -710,8 +710,8 @@ public class GRDNConnectBehaviour : MonoBehaviour
 	/// public default and would hand clients a URL with no matching secret.
 	/// </summary>
 	internal static (string url, string secret) GetSessionConfigForClients() =>
-		(_sessionBotUrl ?? Main.Settings.BotPushUrl ?? "",
-		 _sessionBotSecret ?? Main.Settings.BotSecret ?? "");
+		(_sessionBotUrl ?? HostConfig.BotUrl ?? "",
+		 _sessionBotSecret ?? HostConfig.BotSecret ?? "");
 
 	/// <summary>
 	/// Client side: config just arrived from the host over the packet channel.
@@ -761,7 +761,7 @@ public class GRDNConnectBehaviour : MonoBehaviour
 		Main.ModEntry.Logger.Warning(
 			"[GRDNConnect] Never received session config from the host. " +
 			"Is GRDNConnect installed and an ops session started there? " +
-			"Set BotPushUrl and BotSecret in UMM Settings as a manual fallback.");
+			"Set bot_url and bot_secret in connect.cfg as a manual fallback.");
 	}
 
 	private void SendJson(HttpListenerResponse res, int code, string json)
