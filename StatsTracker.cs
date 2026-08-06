@@ -21,8 +21,9 @@ public class StatsTracker : MonoBehaviour
 {
     // ── Timing ────────────────────────────────────────────────────────────────
     // Car-miles is an accumulating integral (speed × Δt), so a coarser sample
-    // interval barely changes the total but cuts the cost of the per-poll
-    // FindObjectsOfType<TrainCar> scan. 15 s is plenty for distance tracking.
+    // interval barely changes the total. The poll reads the game's live loco
+    // registry rather than scanning the scene, so the cost per sample is now
+    // just the arithmetic. 15 s is plenty for distance tracking.
     private const float POLL_SEC  = 15f;   // speed-sample interval
     private const float FLUSH_SEC = 60f;   // push-to-bot interval
 
@@ -58,11 +59,8 @@ public class StatsTracker : MonoBehaviour
             // Clients never own the stats — only the host can see all locos
             if (!GRDNConnectBehaviour.IsHostOrSingleplayer()) continue;
 
-            var allCars = UnityEngine.Object.FindObjectsOfType<TrainCar>();
-            foreach (var loco in allCars)
+            foreach (var loco in GRDNConnectBehaviour.AllLocos())
             {
-                if (!loco.IsLoco) continue;
-
                 string train = ExtractNumber(loco.ID);
                 if (string.IsNullOrEmpty(train)) continue;
 
