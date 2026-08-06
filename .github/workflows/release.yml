@@ -103,3 +103,9 @@ jobs:
             repository.json
           generate_release_notes: true
           fail_on_unmatched_files: true
+          # A SemVer prerelease tag (anything with a hyphen, e.g. v0.93.0-beta.1)
+          # publishes as a prerelease. This matters for more than a badge: Info.json
+          # points UMM auto-update at releases/latest/download/repository.json, and
+          # GitHub excludes prereleases from "latest". Without this flag a beta tag
+          # would become "latest" and push the beta to every installed player.
+          prerelease: ${{ contains(github.ref_name, '-') }}

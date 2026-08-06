@@ -79,6 +79,21 @@
     </Reference>
   </ItemGroup>
 
+  <!-- MultiplayerAPI (dv-multiplayer) — optional compile dep for the packet channel
+       that carries session config from host to clients. Soft reference: the DLL is
+       only loaded at runtime when the code that touches MPAPI types actually runs,
+       which never happens in singleplayer. Define DVMP_API and add the reference
+       only when the DLL is present in lib/. -->
+  <PropertyGroup Condition="Exists('$(MSBuildProjectDirectory)\lib\MultiplayerAPI.dll')">
+    <DefineConstants>$(DefineConstants);DVMP_API</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup Condition="Exists('$(MSBuildProjectDirectory)\lib\MultiplayerAPI.dll')">
+    <Reference Include="MultiplayerAPI">
+      <HintPath>lib\MultiplayerAPI.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+  </ItemGroup>
+
   <!-- CommandTerminal — optional compile dep for the in-game console commands
        (connect.lag). Define COMMAND_TERMINAL and add the reference only when the
        DLL is present in lib/. Without it ConsoleCommands compiles away to nothing

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
@@ -55,10 +55,10 @@ public class GRDNConnectBehaviour : MonoBehaviour
 	{
 		StartListener(Main.Settings.Port);
 
-		// If we're a multiplayer client, auto-fetch session config (botUrl + secret)
-		// from the host's mod. Retries every 15 s until it succeeds so players who
-		// join mid-op or before /session start still get the config automatically.
-		StartCoroutine(FetchClientConfigLoop());
+		// Session config (botUrl + secret) reaches clients over dv-multiplayer's own
+		// packet channel, which needs neither the host's IP nor an open port 7230.
+		ConnectMpChannel.TryInit();
+		StartCoroutine(RequestClientConfigLoop());
 
 		// Optional CommsRadioAPI integration — compiled and run only when
 		// CommsRadioAPI.dll is present in lib/ at build time.
@@ -142,11 +142,37 @@ public class GRDNConnectBehaviour : MonoBehaviour
 #endif
 	}
 
+	/// <summary>
+	/// Every spawned locomotive, straight from the game's own registry.
+	/// CarSpawner keeps this list live via its spawn/delete events, so reading it
+	/// costs nothing: no scene walk, no per-call filtering, and nothing to
+	/// invalidate. Replaces FindObjectsOfType&lt;TrainCar&gt;() + an IsLoco filter,
+	/// which walked every object in the scene on each call.
+	/// Returns an empty list before the world has loaded.
+	/// </summary>
+	internal static IEnumerable<TrainCar> AllLocos()
+	{
+		try
+		{
+			var spawner = CarSpawner.Instance;
+			if (spawner?.AllLocos != null) return spawner.AllLocos;
+		}
+		catch { }
+		return Array.Empty<TrainCar>();
+	}
+
 	// Cached MultiplayerAPI type. The assembly walk + GetExportedTypes() below is the
 	// expensive part, and IsHostOrSingleplayer() runs per HTTP request and per StatsTracker
 	// poll. The type never changes once loaded, so resolve it once. Only a positive result
 	// is cached, so if DVMP loads after our first call we still pick it up on a later call.
 	private static Type _mpApiType;
+
+	// Resolved once with the type above: name-based property lookups are not free
+	// when they run on every request.
+	private static bool         _mpMembersResolved;
+	private static PropertyInfo _mpIsLoadedProp;
+	private static PropertyInfo _mpInstanceProp;
+	private static PropertyInfo _mpServerProp;
 
 	/// <summary>
 	/// Returns true if this game instance is the server host, or if DVMP is not loaded (singleplayer).
@@ -176,9 +202,22 @@ public class GRDNConnectBehaviour : MonoBehaviour
 				_mpApiType = apiType; // cache once found
 			}
 
+			// These three lookups are by name against a type that never changes, and
+			// this method runs per HTTP request and per stats poll, so resolve them
+			// once alongside the type itself.
+			if (!_mpMembersResolved)
+			{
+				_mpIsLoadedProp = apiType.GetProperty("IsMultiplayerLoaded",
+					BindingFlags.Public | BindingFlags.Static);
+				_mpInstanceProp = apiType.GetProperty("Instance",
+					BindingFlags.Public | BindingFlags.Static);
+				_mpServerProp = apiType.GetProperty("Server",
+					BindingFlags.Public | BindingFlags.Static);
+				_mpMembersResolved = true;
+			}
+
 			// IsMultiplayerLoaded == false → singleplayer even with mod installed
-			PropertyInfo isLoadedProp = apiType.GetProperty("IsMultiplayerLoaded",
-				BindingFlags.Public | BindingFlags.Static);
+			PropertyInfo isLoadedProp = _mpIsLoadedProp;
 			if (isLoadedProp != null)
 			{
 				bool isLoaded = (bool)isLoadedProp.GetValue(null);
@@ -186,8 +225,7 @@ public class GRDNConnectBehaviour : MonoBehaviour
 			}
 
 			// Prefer Instance.IsHost / Instance.IsSinglePlayer (cleaner API)
-			PropertyInfo instanceProp = apiType.GetProperty("Instance",
-				BindingFlags.Public | BindingFlags.Static);
+			PropertyInfo instanceProp = _mpInstanceProp;
 			if (instanceProp != null)
 			{
 				object instance = instanceProp.GetValue(null);
@@ -202,8 +240,7 @@ public class GRDNConnectBehaviour : MonoBehaviour
 			}
 
 			// Fallback: Server != null → hosting
-			PropertyInfo serverProp = apiType.GetProperty("Server",
-				BindingFlags.Public | BindingFlags.Static);
+			PropertyInfo serverProp = _mpServerProp;
 			if (serverProp != null)
 				return serverProp.GetValue(null) != null;
 
@@ -636,6 +673,11 @@ public class GRDNConnectBehaviour : MonoBehaviour
 
 		Main.ModEntry.Logger.Log(
 			$"[GRDNConnect] Session config received — url={_sessionBotUrl ?? "(unchanged)"}");
+
+		// Push it straight out to any client already connected. Without this a client
+		// who joined before /session start would hold nothing until their next retry.
+		ConnectMpChannel.BroadcastSessionConfig(_sessionBotUrl, _sessionBotSecret);
+
 		SendJson(res, 200, "{\"ok\":true}");
 	}
 
@@ -659,162 +701,67 @@ public class GRDNConnectBehaviour : MonoBehaviour
 			$"{{\"botUrl\":\"{Escape(url)}\",\"secret\":\"{Escape(secret)}\"}}");
 	}
 
-	// ── Server IP discovery (for client auto-fetch) ───────────────────────────
-	// Tries to find the host's IP via reflection into dv-multiplayer / Mirror.
-	// Returns null if undeterminable — caller retries later.
-	private static string TryGetServerAddress()
+
+	// ── Session config accessors for the MP packet channel ────────────────────
+
+	/// <summary>
+	/// Host side: what to hand a client that asks for session config. Reads the raw
+	/// session/settings values, never ActiveBotUrl, because that falls back to the
+	/// public default and would hand clients a URL with no matching secret.
+	/// </summary>
+	internal static (string url, string secret) GetSessionConfigForClients() =>
+		(_sessionBotUrl ?? Main.Settings.BotPushUrl ?? "",
+		 _sessionBotSecret ?? Main.Settings.BotSecret ?? "");
+
+	/// <summary>
+	/// Client side: config just arrived from the host over the packet channel.
+	/// Empty botUrl means the host has not started an ops session yet, so we keep
+	/// what we have and let the retry loop ask again.
+	/// </summary>
+	internal static void ApplySessionConfigFromHost(string botUrl, string secret)
 	{
-		try
+		if (string.IsNullOrEmpty(botUrl))
 		{
-			const BindingFlags bf =
-				BindingFlags.Public | BindingFlags.NonPublic |
-				BindingFlags.Instance | BindingFlags.Static;
-
-			foreach (Assembly asm in AppDomain.CurrentDomain.GetAssemblies())
-			{
-				string asmName = asm.GetName().Name;
-
-				if (asmName.StartsWith("Multiplayer", StringComparison.OrdinalIgnoreCase))
-				{
-					// Approach A: Multiplayer.Multiplayer.Settings — has host IP the client typed in
-					Type mainType = asm.GetType("Multiplayer.Multiplayer");
-					object settings = mainType?.GetField("Settings", bf)?.GetValue(null);
-					if (settings != null)
-					{
-						Type st = settings.GetType();
-						foreach (var fn in new[] {
-							"ServerAddress", "ServerIp", "ServerIP", "IpAddress",
-							"Address", "Ip", "IP", "Host", "HostAddress",
-							"LastServerIp", "LastServerAddress", "RemoteEndPoint" })
-						{
-							string v = st.GetField(fn, bf)?.GetValue(settings)?.ToString()
-							        ?? st.GetProperty(fn, bf)?.GetValue(settings)?.ToString();
-							if (!string.IsNullOrEmpty(v) &&
-								v != "localhost" && v != "127.0.0.1") return v;
-						}
-					}
-
-					// Approach B: MultiplayerAPI.Instance — the public dv-multiplayer API
-					Type apiType = null;
-					try
-					{
-						foreach (Type t in asm.GetExportedTypes())
-							if (t.Name == "MultiplayerAPI") { apiType = t; break; }
-					}
-					catch { }
-
-					if (apiType != null)
-					{
-						object inst = apiType.GetProperty("Instance", bf)?.GetValue(null);
-						if (inst != null)
-						{
-							var it = inst.GetType();
-							foreach (var fn in new[] {
-								"ServerAddress", "NetworkAddress", "ServerIp",
-								"HostAddress", "ConnectionAddress" })
-							{
-								string v = it.GetProperty(fn, bf)?.GetValue(inst)?.ToString()
-								        ?? it.GetField(fn, bf)?.GetValue(inst)?.ToString();
-								if (!string.IsNullOrEmpty(v) &&
-									v != "localhost" && v != "127.0.0.1") return v;
-							}
-						}
-					}
-				}
-
-				// Approach C: Mirror.NetworkManager.singleton.networkAddress
-				if (asmName.Equals("Mirror", StringComparison.OrdinalIgnoreCase))
-				{
-					Type nmType = asm.GetType("Mirror.NetworkManager");
-					if (nmType != null)
-					{
-						object singleton = nmType.GetProperty("singleton", bf)?.GetValue(null);
-						if (singleton != null)
-						{
-							string v = nmType.GetField("networkAddress", bf)?.GetValue(singleton)?.ToString();
-							if (!string.IsNullOrEmpty(v) &&
-								v != "localhost" && v != "127.0.0.1") return v;
-						}
-					}
-				}
-			}
+			Main.LogVerbose("[GRDNConnect] Host has no session config yet — will ask again.");
+			return;
 		}
-		catch (Exception ex)
-		{
-			Main.ModEntry.Logger.Warning("[GRDNConnect] TryGetServerAddress: " + ex.Message);
-		}
-		return null;
+
+		_sessionBotUrl = botUrl.TrimEnd('/');
+		if (secret != null) _sessionBotSecret = secret;
+
+		Main.ModEntry.Logger.Log(
+			$"[GRDNConnect] Client session config received — botUrl={_sessionBotUrl}");
 	}
 
-	// ── Auto-fetch client config loop ─────────────────────────────────────────
-	// Runs in the background for every player. Exits immediately if host or if
-	// config is already available. Otherwise queries host:port/client-config
-	// every 15 s until it gets a valid botUrl or gives up after ~10 minutes.
-	private IEnumerator FetchClientConfigLoop()
+	// ── Client config request loop ────────────────────────────────────────────
+	// Asks the host over the DVMP packet channel until we hold a secret. The old
+	// version of this reached for the host's IP and HTTP port, which needed the
+	// address to be discoverable AND port 7230 to be open through the router;
+	// neither held in practice. Retries are cheap now (one small packet), but the
+	// host also broadcasts on /session start, so this is mostly a safety net for
+	// clients that connected before the packet handler was registered.
+	private IEnumerator RequestClientConfigLoop()
 	{
-		// Small delay — let the multiplayer session fully connect first
+		// Let the multiplayer session settle before the first ask.
 		yield return new WaitForSeconds(8f);
 
 		for (int attempt = 0; attempt < 40; attempt++)
 		{
-			// Already have config (from UMM settings or a prior session push).
-			// Test the SECRET, not the URL: ActiveBotUrl always resolves because it
-			// falls back to the public GRDNDefaults.BotUrl, which carries no
-			// credential, so a non-empty URL is no proof we are configured. The
-			// secret is what a client is missing, and without it every request to
-			// the bot is unauthenticated (no radio channels, no VC swapping).
+			// The secret is the thing a client is missing; the URL always resolves
+			// via the public default, so it proves nothing.
 			if (!string.IsNullOrEmpty(ActiveBotSecret)) yield break;
 
-			// We're hosting or in singleplayer — bot pushes to us directly, no need to fetch
+			// Hosting or singleplayer: the bot pushes to us directly.
 			if (IsHostOrSingleplayer()) yield break;
 
-			string serverIp = TryGetServerAddress();
-			if (!string.IsNullOrEmpty(serverIp))
-			{
-				string url = $"http://{serverIp}:{Main.Settings.Port}/client-config";
-				Main.LogVerbose($"[GRDNConnect] Client: fetching session config from host at {url}");
-
-				using (var req = UnityWebRequest.Get(url))
-				{
-					req.timeout = 5;
-					yield return req.SendWebRequest();
-
-					if (req.error == null)
-					{
-						string botUrl = ExtractJsonString(req.downloadHandler.text, "botUrl");
-						string secret = ExtractJsonString(req.downloadHandler.text, "secret");
-
-						if (!string.IsNullOrEmpty(botUrl))
-						{
-							_sessionBotUrl    = botUrl.TrimEnd('/');
-							if (secret != null) _sessionBotSecret = secret;
-							Main.ModEntry.Logger.Log(
-								$"[GRDNConnect] Client session config received — botUrl={_sessionBotUrl}");
-							yield break;  // success
-						}
-						// botUrl null = host hasn't started a session yet — keep retrying
-						Main.LogVerbose(
-							"[GRDNConnect] Host has no session config yet — retrying in 15 s");
-					}
-					else
-					{
-						Main.ModEntry.Logger.Warning(
-							$"[GRDNConnect] Client config fetch failed ({req.responseCode}): {req.error}");
-					}
-				}
-			}
-			else
-			{
-				Main.ModEntry.Logger.Warning(
-					"[GRDNConnect] Could not determine server address — retrying in 15 s");
-			}
-
+			ConnectMpChannel.RequestSessionConfig();
 			yield return new WaitForSeconds(15f);
 		}
 
 		Main.ModEntry.Logger.Warning(
-			"[GRDNConnect] Client config auto-fetch gave up. " +
-			"Set BotPushUrl in UMM Settings as a manual fallback.");
+			"[GRDNConnect] Never received session config from the host. " +
+			"Is GRDNConnect installed and an ops session started there? " +
+			"Set BotPushUrl and BotSecret in UMM Settings as a manual fallback.");
 	}
 
 	private void SendJson(HttpListenerResponse res, int code, string json)
@@ -911,10 +858,8 @@ public class GRDNConnectBehaviour : MonoBehaviour
 
 			// ── NEW APPROACH: car → logicCar → Job field scan ────────────────────
 			sb.AppendLine("\n=== NEW APPROACH: logicCar field scan ===");
-			TrainCar[] allCars = UnityEngine.Object.FindObjectsOfType<TrainCar>();
-			foreach (var loco in allCars)
+			foreach (var loco in AllLocos())
 			{
-				if (!loco.IsLoco) continue;
 				sb.AppendLine($"\nLOCO: {loco.ID} | trainset cars: {loco.trainset?.cars?.Count ?? 0}");
 				if (loco.trainset?.cars == null) { sb.AppendLine("  (no trainset)"); continue; }
 
@@ -969,7 +914,31 @@ public class GRDNConnectBehaviour : MonoBehaviour
 	// Shape: [{ locoId, locoType, jobs: [{ jobId, type, departure, destination }] }]
 	// -------------------------------------------------------------------------
 
+	// /locos is polled by the bot, by RemoteDispatch, and by any browser tab left
+	// open on the board. Rebuilding it per caller multiplied the whole cost (job
+	// task-tree reflection plus a scene walk) by the number of pollers. A short
+	// cache makes N pollers cost the same as one. Two seconds is far below the
+	// ~30 s poll interval, so no poller can miss a job change because of it.
+	private const float LocosCacheSec = 2f;
+	private static string _locosCacheJson;
+	private static float  _locosCacheAt = -999f;
+
 	private void HandleGetLocos(HttpListenerResponse res)
+	{
+		if (_locosCacheJson != null &&
+			Time.realtimeSinceStartup - _locosCacheAt < LocosCacheSec)
+		{
+			SendJson(res, 200, _locosCacheJson);
+			return;
+		}
+
+		string json = BuildLocosJson();
+		_locosCacheJson = json;
+		_locosCacheAt   = Time.realtimeSinceStartup;
+		SendJson(res, 200, json);
+	}
+
+	private string BuildLocosJson()
 	{
 		var sb = new StringBuilder();
 		sb.Append("[");
@@ -999,10 +968,8 @@ public class GRDNConnectBehaviour : MonoBehaviour
 				Main.LogVerbose($"[GRDNConnect] /locos: {carGuidToJobs.Count} car GUID(s) mapped");
 			}
 
-			TrainCar[] allCars = UnityEngine.Object.FindObjectsOfType<TrainCar>();
-			foreach (var loco in allCars)
+			foreach (var loco in AllLocos())
 			{
-				if (!loco.IsLoco) continue;
 
 				var seenJobIds = new HashSet<string>();
 				var locoJobs   = new List<Job>();
@@ -1050,7 +1017,7 @@ public class GRDNConnectBehaviour : MonoBehaviour
 		}
 
 		sb.Append("]");
-		SendJson(res, 200, sb.ToString());
+		return sb.ToString();
 	}
 
 	/// <summary>
