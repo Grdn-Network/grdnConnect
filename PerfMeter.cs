@@ -1,4 +1,4 @@
-// PerfMeter.cs
+﻿// PerfMeter.cs
 // The lag meter for GRDNConnect, ported from DLE/Data/PerfMeter.cs so both mods
 // report the same shape of numbers and can be read side by side.
 //
@@ -28,7 +28,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Reflection;
 using System.Text;
 using UnityEngine;
 
@@ -167,32 +166,24 @@ internal static class PerfMeter
 	internal static float HeapMb() =>
 		_secFilled == 0 ? 0f : _heapMb[(_secHead - 1 + SecN) % SecN];
 
-	// TrainCarRegistry is resolved by reflection so this compiles without the
-	// publicized assembly, and it is only touched when a report is produced.
-	private static PropertyInfo _regInstance;
-	private static FieldInfo    _regMap;
-	private static bool         _regResolved;
-
+	/// <summary>
+	/// Spawned car count, read straight off CarSpawner's live registry.
+	/// This used to reflect into TrainCarRegistry and always reported 0: `Instance`
+	/// is declared on the base SingletonBehaviour&lt;T&gt;, and GetProperty with
+	/// Static but no FlattenHierarchy does not return base-class static members, so
+	/// the lookup silently returned null. CarSpawner is already a compile-time
+	/// reference here, so there is no reason to reflect for this at all.
+	/// </summary>
 	internal static int LiveCars()
 	{
 		try
 		{
-			if (!_regResolved)
-			{
-				_regResolved = true;
-				Type t = Type.GetType("TrainCarRegistry, Assembly-CSharp");
-				if (t != null)
-				{
-					_regInstance = t.GetProperty("Instance",
-						BindingFlags.Public | BindingFlags.Static);
-					_regMap = t.GetField("logicCarToTrainCar",
-						BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-				}
-			}
-			object inst = _regInstance?.GetValue(null);
-			if (inst == null) return 0;
-			var map = _regMap?.GetValue(inst) as System.Collections.ICollection;
-			return map?.Count ?? 0;
+			var all = CarSpawner.Instance?.AllCars;
+			if (all == null) return 0;
+			if (all is System.Collections.ICollection c) return c.Count;
+			int n = 0;
+			foreach (var _ in all) n++;
+			return n;
 		}
 		catch { return 0; }
 	}
