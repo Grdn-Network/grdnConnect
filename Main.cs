@@ -28,16 +28,22 @@ public class Main
 		ModEntry.OnGUI = OnGUI;
 		ModEntry.OnSaveGUI = OnSaveGUI;
 		Settings = UnityModManager.ModSettings.Load<Settings>(modEntry);
+
+		// Bot URL / secret / radio channels live in connect.cfg, not the UMM GUI.
+		// Must load before the behaviour starts, because Start() resolves the active
+		// bot URL. Creates the file (migrating old Settings.xml values) on first run.
+		HostConfig.Load();
+
 		_hostObject = new GameObject("GRDNConnect_Host");
 		Object.DontDestroyOnLoad((Object)(object)_hostObject);
 		_hostObject.AddComponent<GRDNConnectBehaviour>();
 
 		// Hotbox / defect monitor — SHELVED. The defect-detection concept was scrapped,
 		// so the component is never attached: no timer, no scene scans, no alerts fire.
-		// DefectMonitor.cs and the Settings toggle are kept intact so it can be revived
-		// later; re-enable by restoring the guarded AddComponent below.
-		//   if (Settings.DefectDetectorEnabled)
-		//       _hostObject.AddComponent<DefectMonitor>();
+		// DefectMonitor.cs is kept intact so it can be revived later; re-enable by
+		// restoring the line below (and its Settings toggle, removed because a
+		// setting that does nothing is worse than no setting).
+		//   _hostObject.AddComponent<DefectMonitor>();
 
 		// Car-miles stats tracker — polls every 15 s, flushes to bot every 60 s.
 		// Host-only; exits silently when no bot URL is available.

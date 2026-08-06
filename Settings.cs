@@ -14,22 +14,16 @@ public class Settings : UnityModManager.ModSettings, IDrawable
     // ── Radio / Discord VC integration ────────────────────────────────────────
     // Requires CommsRadioAPI mod to be installed for the radio UI to appear.
     // The bot matches players to Discord automatically via their in-game train
-    // number — no per-player Discord ID needed. Set BotPushUrl/BotSecret once.
-
-    [Draw("Bot Push URL — host: auto-set by /session start. Clients: set this manually so GRDN Radio channels and crew updates work.")]
-    public string BotPushUrl = "";
-
-    [Draw("Bot Secret — auto-set by /session start; only needed here as a manual fallback")]
-    public string BotSecret = "";
+    // number — no per-player Discord ID needed.
+    //
+    // Bot URL, secret and the radio channel list are NOT here: they live in
+    // connect.cfg next to this mod. The bot pushes all three at /session start and
+    // they reach clients over the DVMP packet channel, so they are not things a
+    // player sets. Only the settings below get changed mid-session, which is why
+    // they stayed in the GUI where they apply live.
 
     [Draw("Realistic Radio — require being in a loco to switch Discord voice channels (default: off)")]
     public bool RealisticRadio = false;
-
-    // JSON array of radio channels — maps channel name to Discord VC ID.
-    // Format: [{"name":"Main Line","vcId":"123456789"},{"name":"Harbor","vcId":"987654321"}]
-    // Copy the VC ID by right-clicking the voice channel → Copy Channel ID in Discord.
-    [Draw("Radio Channels (JSON — see mod description for format)")]
-    public string RadioChannelsJson = "[]";
 
     // ── Operations mode ───────────────────────────────────────────────────────
     // Enable before /session start. The bot reads this via /server-info and
@@ -38,10 +32,9 @@ public class Settings : UnityModManager.ModSettings, IDrawable
     public bool InterchangeMode = false;
 
     // ── Diagnostics / performance ─────────────────────────────────────────────
-    // Both default OFF to keep per-frame and disk-I/O cost at zero during ops.
-
-    [Draw("Defect Detector (SHELVED) — the experimental hot box / derailment voice-alert feature is currently disabled and this toggle has no effect. Kept for a possible future revival.")]
-    public bool DefectDetectorEnabled = false;
+    // The Defect Detector toggle was removed here: the monitor is shelved and never
+    // attached, so the setting did nothing. DefectMonitor.cs is kept intact for a
+    // possible revival, and the toggle comes back with it.
 
     [Draw("Verbose Logging — extra per-job / per-request diagnostic logging. Leave OFF during ops to avoid log spam and main-thread disk I/O. Errors and warnings are always logged.")]
     public bool VerboseLogging = false;
