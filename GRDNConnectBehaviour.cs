@@ -46,6 +46,11 @@ public class GRDNConnectBehaviour : MonoBehaviour
 		_instance = this;
 	}
 
+	// The lag meter samples every frame: pure math, no allocations, no host check
+	// (local frame time is worth measuring wherever this component lives, and a
+	// client-side reading is exactly what catches client-only regressions).
+	private void Update() => PerfMeter.Sample(Time.unscaledDeltaTime);
+
 	private void Start()
 	{
 		StartListener(Main.Settings.Port);
@@ -224,6 +229,10 @@ public class GRDNConnectBehaviour : MonoBehaviour
 			IAsyncResult async = _listener.BeginGetContext(null, null);
 			while (!async.IsCompleted)
 			{
+				// This coroutine resumes once per frame purely to re-check a flag,
+				// so the idle listener still costs a frame slice. Counted rather
+				// than assumed: see "listener spin" in connect.lag.
+				PerfMeter.NoteListenerSpin();
 				yield return null;
 			}
 			HttpListenerContext ctx;
@@ -235,8 +244,19 @@ public class GRDNConnectBehaviour : MonoBehaviour
 			{
 				break;
 			}
+
+			// Path is read before the handler runs, because the handler closes the
+			// response and disposes the context.
+			string perfPath = "/";
+			try { perfPath = ctx.Request.Url.AbsolutePath; } catch { }
+			var perfSw = System.Diagnostics.Stopwatch.StartNew();
+
 			try { HandleRequest(ctx); }
 			catch (Exception ex) { Main.ModEntry.Logger.Error("[GRDNConnect] Unhandled: " + ex.Message); }
+
+			// HandleRequest runs inline on the main thread, so this is exactly the
+			// time the game frame paid to serve this request.
+			try { PerfMeter.RecordRequest(perfPath, perfSw.ElapsedMilliseconds); } catch { }
 		}
 	}
 

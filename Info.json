@@ -2,7 +2,7 @@
     "Id": "GRDNConnect",
     "DisplayName": "GRDN Connect",
     "Author": "GRDN Network",
-    "Version": "0.92.1",
+    "Version": "0.93.0",
     "ManagerVersion": "0.27.0",
     "GameVersion": "1.0",
     "AssemblyName": "GRDNConnect.dll",

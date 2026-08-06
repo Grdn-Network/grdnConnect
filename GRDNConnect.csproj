@@ -79,6 +79,20 @@
     </Reference>
   </ItemGroup>
 
+  <!-- CommandTerminal — optional compile dep for the in-game console commands
+       (connect.lag). Define COMMAND_TERMINAL and add the reference only when the
+       DLL is present in lib/. Without it ConsoleCommands compiles away to nothing
+       and the build still succeeds. -->
+  <PropertyGroup Condition="Exists('$(MSBuildProjectDirectory)\lib\CommandTerminal.dll')">
+    <DefineConstants>$(DefineConstants);COMMAND_TERMINAL</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup Condition="Exists('$(MSBuildProjectDirectory)\lib\CommandTerminal.dll')">
+    <Reference Include="CommandTerminal">
+      <HintPath>lib\CommandTerminal.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+  </ItemGroup>
+
   <!-- Facepunch.Steamworks: NO compile-time reference needed.
        Steam ID is obtained at runtime via reflection — the DLL is always
        loaded by DV itself, so no lib/ copy is required. -->
