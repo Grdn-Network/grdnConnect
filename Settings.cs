@@ -28,8 +28,22 @@ public class Settings : UnityModManager.ModSettings, IDrawable
     // ── Operations mode ───────────────────────────────────────────────────────
     // Enable before /session start. The bot reads this via /server-info and
     // activates hub-and-spoke stats: car-miles, leg classification, role labels.
-    [Draw("Interchange Mode — track car-miles and role labels for hub-and-spoke operations")]
-    public bool InterchangeMode = false;
+    // Interchange Mode — SHELVED. We are not running interchange ops for now.
+    //
+    // It never did anything in the mod anyway: the value was only ever reported
+    // out via /server-info, and on the bot side it set ops_sessions.ops_mode, which
+    // nothing ever read back. Its one visible effect was a "Mode: Interchange"
+    // label on the session-start embed.
+    //
+    // Nothing about stats depends on this. The bot classifies every completion as
+    // local / hub_inbound / hub_outbound / interchange regardless of this flag,
+    // driven by the configured hub stations, so car-km, job counts, leg types and
+    // role labels all keep working exactly as before.
+    //
+    // To revive: uncomment below, restore the interchangeMode field in
+    // /server-info, and the matching block in the bot's session.js.
+    //   [Draw("Interchange Mode — tells the bot to label the session hub-and-spoke. Set before /session start.")]
+    //   public bool InterchangeMode = false;
 
     // ── Diagnostics / performance ─────────────────────────────────────────────
     // The Defect Detector toggle was removed here: the monitor is shelved and never
