@@ -510,8 +510,13 @@ public class GRDNConnectBehaviour : MonoBehaviour
 
 		string nameJson = !string.IsNullOrEmpty(serverName) ? $"\"{Escape(serverName)}\"" : "null";
 		string passJson = !string.IsNullOrEmpty(password)   ? $"\"{Escape(password)}\"" : "null";
-		string imJson   = Main.Settings.InterchangeMode ? "true" : "false";
-		SendJson(res, 200, $"{{\"serverName\":{nameJson},\"password\":{passJson},\"interchangeMode\":{imJson}}}");
+
+		// interchangeMode is still reported, hard-coded false, because the setting is
+		// shelved (see Settings.cs). The key stays in the payload so the response shape
+		// does not change for anything already reading it; the bot treats it as false
+		// either way. To revive, put Main.Settings.InterchangeMode back here.
+		SendJson(res, 200,
+			$"{{\"serverName\":{nameJson},\"password\":{passJson},\"interchangeMode\":false}}");
 	}
 
 	private unsafe void HandleGetJobs(HttpListenerResponse res)
