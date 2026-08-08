@@ -79,6 +79,16 @@
     </Reference>
   </ItemGroup>
 
+  <!-- Loud warning for builds outside CI. CommsRadioAPI.dll is gitignored on purpose
+       (its presence is what flips COMMS_RADIO_API), but that means a fresh clone
+       builds clean with the radio silently compiled OUT. The resulting DLL looks
+       fine and has no GRDN RADIO or GRDN CREW. CI downloads the DLL; local and VPS
+       builds have to place it themselves, so say so rather than fail quietly. -->
+  <Target Name="WarnMissingCommsRadioAPI" BeforeTargets="Build"
+          Condition="!Exists('$(MSBuildProjectDirectory)\lib\CommsRadioAPI.dll')">
+    <Warning Text="lib/CommsRadioAPI.dll is MISSING: GRDN RADIO and GRDN CREW are being compiled OUT of this build. Copy it from the game's Mods/CommsRadioAPI_v*/ folder, or download it from https://github.com/fauxnik/dv-comms-radio-api/releases/latest into lib/. (CI does this automatically; local and VPS builds must not skip it.)" />
+  </Target>
+
   <!-- MultiplayerAPI (dv-multiplayer) — optional compile dep for the packet channel
        that carries session config from host to clients. Soft reference: the DLL is
        only loaded at runtime when the code that touches MPAPI types actually runs,
