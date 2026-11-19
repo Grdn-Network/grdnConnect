@@ -1,0 +1,9 @@
+{
+  "Releases": [
+    {
+      "Id": "GRDNConnect",
+      "Version": "0.93.0-beta.4",
+      "DownloadUrl": "https://github.com/Grdn-Network/grdnConnect/releases/download/v0.93.0-beta.4/GRDNConnect-v0.93.0-beta.4.zip"
+    }
+  ]
+}

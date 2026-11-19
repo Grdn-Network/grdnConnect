@@ -48,17 +48,20 @@ jobs:
           }
           Write-Host "lib\CommsRadioAPI.dll is ready — COMMS_RADIO_API will be defined"
 
-      - name: Patch Info.json version
+      - name: Stamp Info.json (version + update channel)
         shell: pwsh
         run: |
-          # Strip the leading 'v' from the tag  (v1.2.3 → 1.2.3)
-          $version = "${{ github.ref_name }}".TrimStart('v')
-          Write-Host "Stamping Info.json with version $version"
+          # v1.2.3 -> 1.2.3. A hyphen in the tag (v0.93.0-beta.1) means beta channel.
+          $tag     = "${{ github.ref_name }}"
+          $version = $tag.TrimStart('v')
+          $manifest = if ($tag.Contains('-')) { 'repository-beta.json' } else { 'repository.json' }
+          $pointer  = "https://raw.githubusercontent.com/${{ github.repository }}/main/$manifest"
           $text = Get-Content Info.json -Raw
-          # Simple regex replace — avoids ConvertFrom-Json mangling special characters
-          $text = $text -replace '"Version"\s*:\s*"[^"]*"', ('"Version": "' + $version + '"')
+          # Regex, not ConvertFrom-Json: keeps formatting and special characters intact
+          $text = $text -replace '"Version"\s*:\s*"[^"]*"',    ('"Version": "' + $version + '"')
+          $text = $text -replace '"Repository"\s*:\s*"[^"]*"', ('"Repository": "' + $pointer + '"')
           Set-Content Info.json $text -Encoding utf8NoBOM
-          Write-Host "Done — Info.json now contains: $(Select-String 'Version' Info.json)"
+          Write-Host "Version $version, update channel $manifest"
 
       - name: Restore NuGet packages
         run: dotnet restore GRDNConnect.csproj
@@ -74,14 +77,15 @@ jobs:
           Copy-Item "Info.json" "release\GRDNConnect\"
           Compress-Archive -Path "release\GRDNConnect" -DestinationPath "GRDNConnect-${{ github.ref_name }}.zip"
 
-      - name: Generate repository.json (UMM auto-update manifest)
+      - name: Generate repository.json (UMM/DVMM update manifest)
         shell: pwsh
         run: |
-          # UMM checks the URL in Info.json's "Repository" field and compares the
-          # listed Version against the installed one. We attach this manifest to every
-          # release, so Info.json points at releases/latest/download/repository.json.
-          $version = "${{ github.ref_name }}".TrimStart('v')
-          $zipUrl  = "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/GRDNConnect-${{ github.ref_name }}.zip"
+          # Still attached to every release: installs older than this change read
+          # releases/latest/download/repository.json and follow stable through it.
+          # New installs read the copy committed on main (see last step).
+          $tag     = "${{ github.ref_name }}"
+          $version = $tag.TrimStart('v')
+          $zipUrl  = "https://github.com/${{ github.repository }}/releases/download/$tag/GRDNConnect-$tag.zip"
           $manifest = [ordered]@{
             Releases = @(
               [ordered]@{
@@ -103,9 +107,28 @@ jobs:
             repository.json
           generate_release_notes: true
           fail_on_unmatched_files: true
-          # A SemVer prerelease tag (anything with a hyphen, e.g. v0.93.0-beta.1)
-          # publishes as a prerelease. This matters for more than a badge: Info.json
-          # points UMM auto-update at releases/latest/download/repository.json, and
-          # GitHub excludes prereleases from "latest". Without this flag a beta tag
-          # would become "latest" and push the beta to every installed player.
+          # Anything with a hyphen (v0.93.0-beta.1) publishes as a prerelease, so
+          # GitHub's releases/latest keeps pointing at stable for older installs.
           prerelease: ${{ contains(github.ref_name, '-') }}
+
+      - name: Commit update manifests to main
+        shell: pwsh
+        run: |
+          # Update pointers live on main, not in release assets. A release asset is
+          # frozen when it ships, so it can never advertise a newer version.
+          # Beta tag: rewrite repository-beta.json only.
+          # Stable tag: rewrite both, so beta players move onto the stable too.
+          $tag  = "${{ github.ref_name }}"
+          $json = Get-Content repository.json -Raw
+          git fetch origin main
+          # -f: drop the stamped Info.json and generated manifest, both already shipped
+          git checkout -f -B main origin/main
+          Set-Content repository-beta.json $json -Encoding utf8NoBOM
+          if (-not $tag.Contains('-')) { Set-Content repository.json $json -Encoding utf8NoBOM }
+          $changed = git status --porcelain -- repository.json repository-beta.json
+          if (-not $changed) { Write-Host "Manifests already current"; exit 0 }
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add repository.json repository-beta.json
+          git commit -m "Point update manifests at $tag"
+          git push origin main
