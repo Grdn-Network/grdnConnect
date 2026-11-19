@@ -49,6 +49,11 @@ public class Main
 		// Host-only; exits silently when no bot URL is available.
 		_hostObject.AddComponent<StatsTracker>();
 
+		// Mod auto-sync (BETA). Host pushes its scanned mod list to the bot on
+		// demand via the settings button. The bot ignores it unless MOD_SYNC_BETA
+		// is on, so this component is inert until the beta is enabled bot-side.
+		_hostObject.AddComponent<ModSyncSender>();
+
 		ModEntry.Logger.Log($"[GRDNConnect] Loaded. HTTP server starting on port {Settings.Port}.");
 		return true;
 	}
@@ -56,6 +61,10 @@ public class Main
 	private static void OnGUI(UnityModManager.ModEntry modEntry)
 	{
 		UnityModManagerNet.Extensions.Draw<Settings>(Settings, modEntry);
+
+		// BETA: push the host's installed mod list to the bot's Auto Sync preset.
+		if (GUILayout.Button("Sync mods to bot (beta)"))
+			ModSyncSender.Instance?.Trigger();
 	}
 
 	private static void OnSaveGUI(UnityModManager.ModEntry modEntry)
