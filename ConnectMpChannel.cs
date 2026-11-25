@@ -40,10 +40,19 @@ internal static class ConnectMpChannel
 	/// nothing useful to salvage. A difference in mod version alone, on the same
 	/// protocol, is only a warning.
 	///
+	/// 3: config reply drops BotUrl and Secret, since clients no longer call the
+	///    bot. Adds the bot request relay packets.
 	/// 2: added Protocol/ModVersion to both packets and ChannelsJson to the reply.
 	/// 1: 0.93.0-beta.1 to beta.4. BotUrl + Secret only.
 	/// </summary>
-	internal const byte ProtocolVersion = 2;
+	internal const byte ProtocolVersion = 3;
+
+	/// <summary>
+	/// How long a client waits for the host to come back with a bot result. The
+	/// host's own HTTP call to the bot is the slow part; this only has to be longer
+	/// than that plus a round trip.
+	/// </summary>
+	private const float RelayTimeoutSec = 8f;
 
 	/// <summary>True once event subscriptions are in place.</summary>
 	internal static bool TransportArmed { get; private set; }
@@ -56,6 +65,104 @@ internal static class ConnectMpChannel
 	internal static bool ProtocolMismatch { get; private set; }
 
 	internal static void NoteProtocolMismatch() => ProtocolMismatch = true;
+
+	/// <summary>
+	/// Clear per-connection client state. A refusal or a "session open" answer is
+	/// only true of the host that sent it, so both are dropped when the client
+	/// session changes.
+	/// </summary>
+	internal static void ResetClientState()
+	{
+		ProtocolMismatch = false;
+#if DVMP_API
+		// Waiting coroutines time out on their own; dropping the entries means a
+		// late reply from the old host finds nothing to complete.
+		_pendingRelays.Clear();
+#endif
+		GRDNConnectBehaviour.ResetClientSessionState();
+	}
+
+	/// <summary>
+	/// Client side: bot calls this client has asked the host to make, by request id,
+	/// waiting for a reply. Entries are removed by the waiting coroutine, so a reply
+	/// that arrives after the timeout finds nothing and is dropped.
+	/// </summary>
+#if DVMP_API
+	private static readonly System.Collections.Generic.Dictionary<byte, BotCallResult> _pendingRelays =
+		new System.Collections.Generic.Dictionary<byte, BotCallResult>();
+
+	private static byte _nextRelayId;
+#endif
+
+	/// <summary>
+	/// Client side: ask the host to make a bot call and wait for the answer. Yields
+	/// until the host replies or the wait runs out.
+	/// </summary>
+	internal static System.Collections.IEnumerator RelayPost(
+		string route, string bodyJson, BotCallResult result)
+	{
+#if DVMP_API
+		if (!TransportArmed || !ConnectMpTransport.HasClientSession())
+		{
+			result.Fail("no multiplayer session");
+			yield break;
+		}
+
+		byte id;
+		unchecked { id = ++_nextRelayId; }
+		_pendingRelays[id] = result;
+
+		try { ConnectMpTransport.SendBotRequest(id, route, bodyJson); }
+		catch (Exception ex)
+		{
+			_pendingRelays.Remove(id);
+			result.Fail(ex.Message);
+			yield break;
+		}
+
+		float deadline = UnityEngine.Time.realtimeSinceStartup + RelayTimeoutSec;
+		while (!result.Done && UnityEngine.Time.realtimeSinceStartup < deadline)
+			yield return null;
+
+		_pendingRelays.Remove(id);
+
+		if (!result.Done)
+			result.Fail("the host did not answer");
+#else
+		result.Fail("built without the multiplayer API");
+		yield break;
+#endif
+	}
+
+	/// <summary>
+	/// Host side: send a relayed bot result back to the client that asked. Takes the
+	/// player as object so GRDNConnectBehaviour never names an MPAPI type.
+	/// </summary>
+	internal static void SendRelayResult(
+		object player, byte requestId, bool ok, string responseJson, string error)
+	{
+#if DVMP_API
+		if (!TransportArmed) return;
+		try { ConnectMpTransport.SendBotResult(player, requestId, ok, responseJson, error); }
+		catch (Exception ex)
+		{
+			Main.ModEntry.Logger.Warning("[GRDNConnect] relay result failed: " + ex.Message);
+		}
+#endif
+	}
+
+#if DVMP_API
+	/// <summary>Client side: a relayed result arrived. Unknown ids are stale, so dropped.</summary>
+	internal static void CompleteRelay(byte id, bool ok, string responseJson, string error)
+	{
+		if (!_pendingRelays.TryGetValue(id, out var result)) return;
+
+		result.ResponseJson = responseJson ?? "";
+		result.Error        = error ?? "";
+		result.Ok           = ok;
+		result.Done         = true;
+	}
+#endif
 
 #if DVMP_API
 	/// <summary>
@@ -146,7 +253,7 @@ internal static class ConnectMpChannel
 	/// before /session start would sit with no secret until they reconnected.
 	/// No-op in singleplayer or when not hosting.
 	/// </summary>
-	internal static void BroadcastSessionConfig(string botUrl, string secret, string channelsJson)
+	internal static void BroadcastSessionConfig(bool sessionActive, string channelsJson)
 	{
 #if DVMP_API
 		if (!TransportArmed) return;
@@ -154,11 +261,11 @@ internal static class ConnectMpChannel
 		// Guard against a re-push of config that has not changed, so clients are not
 		// sent a packet that would tell them nothing new. The bot also filters on its
 		// side; this covers any caller that does not.
-		string stamp = $"{botUrl}\n{secret}\n{channelsJson}";
+		string stamp = $"{sessionActive}\n{channelsJson}";
 		if (stamp == _lastBroadcast) return;
 		_lastBroadcast = stamp;
 
-		try { ConnectMpTransport.SendConfigToAll(botUrl, secret, channelsJson); }
+		try { ConnectMpTransport.SendConfigToAll(sessionActive, channelsJson); }
 		catch (Exception ex)
 		{
 			Main.ModEntry.Logger.Warning("[GRDNConnect] config broadcast failed: " + ex.Message);
@@ -190,7 +297,11 @@ internal static class ConnectMpTransport
 			ConnectMpChannel.ResetBroadcastState();
 		};
 		MPAPI.MultiplayerAPI.ClientStarted += OnClientStarted;
-		MPAPI.MultiplayerAPI.ClientStopped += () => { _client = null; };
+		MPAPI.MultiplayerAPI.ClientStopped += () =>
+		{
+			_client = null;
+			ConnectMpChannel.ResetClientState();
+		};
 
 		// A session may already be live (mod reloaded into a running game).
 		if (MPAPI.MultiplayerAPI.Server != null) OnServerStarted(MPAPI.MultiplayerAPI.Server);
@@ -225,18 +336,18 @@ internal static class ConnectMpTransport
 
 				// Tell them why. Empty config, our versions, so their log names the
 				// problem rather than timing out in silence.
-				SendConfigTo(sender, "", "", "[]");
+				SendConfigTo(sender, false, "[]");
 				return;
 			}
 
 			if (!_connectClients.Contains(sender)) _connectClients.Add(sender);
 
-			// Serve whatever the host currently holds. When no session has been
-			// started yet these are empty; the client keeps asking on a slow retry
-			// and the bot's /session start also triggers a broadcast, so the client
-			// gets it either way.
-			var (url, secret, channelsJson) = GRDNConnectBehaviour.GetSessionConfigForClients();
-			SendConfigTo(sender, url, secret, channelsJson);
+			// Serve whatever the host currently holds. Before /session start there is
+			// no session, so SessionActive is false and the client keeps asking on a
+			// slow retry. The bot's /session start also triggers a broadcast, so the
+			// client gets it either way.
+			var (active, channelsJson) = GRDNConnectBehaviour.GetSessionConfigForClients();
+			SendConfigTo(sender, active, channelsJson);
 
 			if (clientVersion != Main.ModVersion)
 				Main.ModEntry.Logger.Warning(
@@ -246,7 +357,31 @@ internal static class ConnectMpTransport
 
 			Main.ModEntry.Logger.Log(
 				$"[GRDNConnect] {sender.Username} runs GRDNConnect; sent session config " +
-				(string.IsNullOrEmpty(url) ? "(none yet, no session started)." : $"(url={url})."));
+				(active ? "(session open)." : "(no session started yet)."));
+		});
+
+		// A client asking the host to spend its token on a bot call. The route
+		// allowlist is the whole protection here, so it is checked before anything
+		// else happens and a refusal is logged with the player who asked.
+		server.RegisterPacket<ConnectBotRequestPacket>((packet, sender) =>
+		{
+			if (packet.Protocol != ConnectMpChannel.ProtocolVersion)
+			{
+				SendBotResult(sender, packet.RequestId, false, "", "version mismatch with the host");
+				return;
+			}
+
+			if (!BotCall.IsRelayable(packet.Route))
+			{
+				Main.ModEntry.Logger.Warning(
+					$"[GRDNConnect] Refused to relay '{packet.Route}' for {sender.Username}: " +
+					"not an allowed client route.");
+				SendBotResult(sender, packet.RequestId, false, "", "route not allowed");
+				return;
+			}
+
+			GRDNConnectBehaviour.RelayBotCallForClient(
+				sender, sender.Username, packet.RequestId, packet.Route, packet.BodyJson);
 		});
 	}
 
@@ -254,6 +389,7 @@ internal static class ConnectMpTransport
 	private static void OnClientStarted(MPAPI.Interfaces.IClient client)
 	{
 		_client = client;
+		ConnectMpChannel.ResetClientState();
 
 		client.RegisterPacket<ConnectConfigPacket>(packet =>
 		{
@@ -277,7 +413,13 @@ internal static class ConnectMpTransport
 					$"{Main.ModVersion}. Compatible, but worth matching.");
 
 			GRDNConnectBehaviour.ApplySessionConfigFromHost(
-				packet.BotUrl, packet.Secret, packet.ChannelsJson);
+				packet.SessionActive, packet.ChannelsJson);
+		});
+
+		client.RegisterPacket<ConnectBotResultPacket>(packet =>
+		{
+			ConnectMpChannel.CompleteRelay(
+				packet.RequestId, packet.Ok, packet.ResponseJson, packet.Error);
 		});
 
 		Main.ModEntry.Logger.Log("[GRDNConnect] client session started; config handler registered.");
@@ -303,24 +445,53 @@ internal static class ConnectMpTransport
 
 	[MethodImpl(MethodImplOptions.NoInlining)]
 	private static void SendConfigTo(
-		MPAPI.Interfaces.IPlayer player, string botUrl, string secret, string channelsJson)
+		MPAPI.Interfaces.IPlayer player, bool sessionActive, string channelsJson)
 	{
 		((MPAPI.Interfaces.IServer)_server).SendPacketToPlayer(new ConnectConfigPacket
 		{
-			Protocol     = ConnectMpChannel.ProtocolVersion,
-			ModVersion   = Main.ModVersion,
-			BotUrl       = botUrl ?? "",
-			Secret       = secret ?? "",
-			ChannelsJson = channelsJson ?? "[]",
+			Protocol      = ConnectMpChannel.ProtocolVersion,
+			ModVersion    = Main.ModVersion,
+			SessionActive = sessionActive,
+			ChannelsJson  = channelsJson ?? "[]",
 		}, player);
 	}
 
+	/// <summary>Host side: hand a relayed bot result back to the client that asked.</summary>
 	[MethodImpl(MethodImplOptions.NoInlining)]
-	internal static void SendConfigToAll(string botUrl, string secret, string channelsJson)
+	internal static void SendBotResult(
+		object player, byte requestId, bool ok, string responseJson, string error)
+	{
+		if (_server == null || !(player is MPAPI.Interfaces.IPlayer target)) return;
+		((MPAPI.Interfaces.IServer)_server).SendPacketToPlayer(new ConnectBotResultPacket
+		{
+			Protocol     = ConnectMpChannel.ProtocolVersion,
+			RequestId    = requestId,
+			Ok           = ok,
+			ResponseJson = responseJson ?? "",
+			Error        = error ?? "",
+		}, target);
+	}
+
+	/// <summary>Client side: ask the host to make a bot call for us.</summary>
+	[MethodImpl(MethodImplOptions.NoInlining)]
+	internal static void SendBotRequest(byte requestId, string route, string bodyJson)
+	{
+		if (_client == null) return;
+		((MPAPI.Interfaces.IClient)_client).SendPacketToServer(new ConnectBotRequestPacket
+		{
+			Protocol  = ConnectMpChannel.ProtocolVersion,
+			RequestId = requestId,
+			Route     = route ?? "",
+			BodyJson  = bodyJson ?? "{}",
+		});
+	}
+
+	[MethodImpl(MethodImplOptions.NoInlining)]
+	internal static void SendConfigToAll(bool sessionActive, string channelsJson)
 	{
 		if (_server == null) return;
 		foreach (var obj in _connectClients)
-			SendConfigTo((MPAPI.Interfaces.IPlayer)obj, botUrl, secret, channelsJson);
+			SendConfigTo((MPAPI.Interfaces.IPlayer)obj, sessionActive, channelsJson);
 		if (_connectClients.Count > 0)
 			Main.ModEntry.Logger.Log(
 				$"[GRDNConnect] pushed session config to {_connectClients.Count} client(s).");
@@ -339,23 +510,54 @@ public class ConnectConfigRequestPacket : MPAPI.Interfaces.Packets.IPacket
 }
 
 /// <summary>
-/// Server to client: the session's bot URL, per-session secret and crew channel list.
-/// Empty BotUrl means the host has not started an ops session yet and the client should
-/// keep asking. A Protocol that does not match the client's is a refusal, whatever else
-/// the packet holds. Auto-serialized.
+/// Server to client: what a client needs for its radio, which is no longer a
+/// credential. Clients reach the bot only by asking the host (see BotCall), so no
+/// URL and no token are sent. A Protocol that does not match the client's is a
+/// refusal, whatever else the packet holds. Auto-serialized.
 /// </summary>
 public class ConnectConfigPacket : MPAPI.Interfaces.Packets.IPacket
 {
 	public byte   Protocol   { get; set; }
 	public string ModVersion { get; set; }
-	public string BotUrl     { get; set; }
-	public string Secret     { get; set; }
+
+	/// <summary>
+	/// True once the host holds bot config, meaning an ops session is open. False
+	/// tells the client to keep asking.
+	/// </summary>
+	public bool SessionActive { get; set; }
 
 	/// <summary>
 	/// The channels array from the bot's /session-config, relayed verbatim so clients
 	/// need no bot access of their own. Parsed by RadioIntegration.ParseChannels.
 	/// </summary>
 	public string ChannelsJson { get; set; }
+}
+
+/// <summary>
+/// Client to server: "make this bot call for me." The host checks the route against
+/// its own allowlist before spending its token on it. Auto-serialized.
+/// </summary>
+public class ConnectBotRequestPacket : MPAPI.Interfaces.Packets.IPacket
+{
+	public byte   Protocol  { get; set; }
+
+	/// <summary>Correlates the reply. Wraps, which is fine for one call at a time per player.</summary>
+	public byte   RequestId { get; set; }
+
+	/// <summary>Bare route name, no slash, for example "radio-change".</summary>
+	public string Route     { get; set; }
+
+	public string BodyJson  { get; set; }
+}
+
+/// <summary>Server to client: what the bot said, or why it did not get asked. Auto-serialized.</summary>
+public class ConnectBotResultPacket : MPAPI.Interfaces.Packets.IPacket
+{
+	public byte   Protocol     { get; set; }
+	public byte   RequestId    { get; set; }
+	public bool   Ok           { get; set; }
+	public string ResponseJson { get; set; }
+	public string Error        { get; set; }
 }
 
 #endif

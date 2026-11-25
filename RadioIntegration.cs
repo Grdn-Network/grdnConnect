@@ -152,15 +152,6 @@ public static class RadioIntegration
 
     private static IEnumerator PushRadioChange(string vcId)
     {
-        string pushUrl = GRDNConnectBehaviour.ActiveBotUrl?.TrimEnd('/') ?? "";
-        string secret  = GRDNConnectBehaviour.ActiveBotSecret ?? "";
-
-        if (string.IsNullOrEmpty(pushUrl))
-        {
-            Main.ModEntry.Logger.Warning("[GRDNConnect] Radio push skipped — BotPushUrl not set.");
-            yield break;
-        }
-
         // RealisticRadio: require player to be in a loco before switching channels.
         // Default off — anyone can switch their Discord VC from anywhere.
         string trainNumber = GetPlayerTrainNumber();
@@ -188,52 +179,40 @@ public static class RadioIntegration
         if (!string.IsNullOrEmpty(trainNumber))
             fields.Append($",\"trainNumber\":\"{Esc(trainNumber)}\"");
 
-        string url  = pushUrl + "/radio-change";
-        string body = "{" + fields.ToString() + "}";
-        byte[] raw  = Encoding.UTF8.GetBytes(body);
+        // Host calls the bot directly. A client asks the host to, because clients
+        // hold no bot token.
+        var result = new BotCallResult();
+        yield return BotCall.Post("radio-change", "{" + fields + "}", result);
 
-        using (var req = new UnityWebRequest(url, "POST"))
+        if (!result.Ok)
         {
-            req.uploadHandler   = new UploadHandlerRaw(raw);
-            req.downloadHandler = new DownloadHandlerBuffer();
-            req.SetRequestHeader("Content-Type", "application/json");
-            if (!string.IsNullOrEmpty(secret))
-                req.SetRequestHeader("x-secret", secret);
-
-            yield return req.SendWebRequest();
-
-            if (req.error == null)
-            {
-                // Bot replies 200 with a "status" telling us what actually happened
-                // (moved / not_linked / not_in_voice / ...). A 200 alone does NOT mean
-                // someone was moved — read the status. An older bot that doesn't send a
-                // status is treated as success (HTTP 200 = request accepted) so the two
-                // can be deployed in any order without a false "Switch failed".
-                string status = ExtractStatus(req.downloadHandler.text);
-                if (string.IsNullOrEmpty(status))
-                {
-                    RadioResult = 1;
-                    RadioResultMessage = "Switched!";
-                    Main.LogVerbose($"[GRDNConnect] Radio push OK (legacy bot, no status) → vcId={vcId}");
-                }
-                else
-                {
-                    bool moved = status == "moved" || status == "already_there";
-                    RadioResultMessage = MapStatusMessage(status);
-                    RadioResult = moved ? 1 : 2;
-                    if (moved)
-                        Main.LogVerbose($"[GRDNConnect] Radio push OK ({status}) → vcId={vcId}");
-                    else
-                        Main.ModEntry.Logger.Log($"[GRDNConnect] Radio push: bot reported '{status}' for vcId={vcId}");
-                }
-            }
-            else
-            {
-                RadioResult = 2;
-                RadioResultMessage = req.responseCode == 0 ? "Bot offline" : "Switch error";
-                Main.ModEntry.Logger.Warning($"[GRDNConnect] Radio push failed ({req.responseCode}): {req.error}");
-            }
+            RadioResult = 2;
+            RadioResultMessage = "Bot offline";
+            Main.ModEntry.Logger.Warning($"[GRDNConnect] Radio push failed: {result.Error}");
+            yield break;
         }
+
+        // The bot replies with a "status" telling us what actually happened
+        // (moved / not_linked / not_in_voice / ...). Success alone does NOT mean
+        // someone was moved, so read the status. A bot that sends no status is
+        // treated as success, so the two can be deployed in any order without a
+        // false "Switch failed".
+        string status = ExtractStatus(result.ResponseJson);
+        if (string.IsNullOrEmpty(status))
+        {
+            RadioResult = 1;
+            RadioResultMessage = "Switched!";
+            Main.LogVerbose($"[GRDNConnect] Radio push OK (no status in reply) → vcId={vcId}");
+            yield break;
+        }
+
+        bool moved = status == "moved" || status == "already_there";
+        RadioResultMessage = MapStatusMessage(status);
+        RadioResult = moved ? 1 : 2;
+        if (moved)
+            Main.LogVerbose($"[GRDNConnect] Radio push OK ({status}) → vcId={vcId}");
+        else
+            Main.ModEntry.Logger.Log($"[GRDNConnect] Radio push: bot reported '{status}' for vcId={vcId}");
     }
 
     // ── Player loco detection ─────────────────────────────────────────────────

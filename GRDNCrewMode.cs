@@ -218,16 +218,6 @@ public class GRDNCrewState : AStateBehaviour
     // ── HTTP push ─────────────────────────────────────────────────────────────
     private IEnumerator PostCrewAssign(string fromTrain, string toTrain, string locoType)
     {
-        string pushUrl = GRDNConnectBehaviour.ActiveBotUrl?.TrimEnd('/');
-        string secret  = GRDNConnectBehaviour.ActiveBotSecret ?? "";
-
-        if (string.IsNullOrEmpty(pushUrl))
-        {
-            Main.ModEntry.Logger.Warning("[CrewMode] BotPushUrl not set — skipped.");
-            _crewResult = Disp.Failure;
-            yield break;
-        }
-
         string locoField = !string.IsNullOrEmpty(locoType)
             ? $",\"locoType\":\"{Esc(locoType)}\""
             : "";
@@ -237,33 +227,24 @@ public class GRDNCrewState : AStateBehaviour
             ? $",\"steamId\":\"{steamId}\",\"steamName\":\"{Esc(steamName)}\""
             : "";
 
-        string fullUrl = pushUrl + "/update-crew";
-        string body    = $"{{\"fromTrainNumber\":\"{Esc(fromTrain)}\",\"toTrainNumber\":\"{Esc(toTrain)}\"{locoField}{steamField}}}";
-        byte[] raw     = Encoding.UTF8.GetBytes(body);
+        string body = $"{{\"fromTrainNumber\":\"{Esc(fromTrain)}\",\"toTrainNumber\":\"{Esc(toTrain)}\"{locoField}{steamField}}}";
 
-        using (var req = new UnityWebRequest(fullUrl, "POST"))
+        // Host calls the bot directly. A client asks the host to, because clients
+        // hold no bot token and /update-crew is host-only bot-side.
+        var result = new BotCallResult();
+        yield return BotCall.Post("update-crew", body, result);
+
+        if (result.Ok)
         {
-            req.uploadHandler   = new UploadHandlerRaw(raw);
-            req.downloadHandler = new DownloadHandlerBuffer();
-            req.SetRequestHeader("Content-Type", "application/json");
-            if (!string.IsNullOrEmpty(secret))
-                req.SetRequestHeader("x-secret", secret);
-
-            yield return req.SendWebRequest();
-
-            if (req.error == null)
-            {
-                _lastRegisteredTrain = toTrain;
-                _crewResult = Disp.Success;
-                Main.ModEntry.Logger.Log(
-                    $"[CrewMode] Registered → [{locoType ?? "?"}] {toTrain} (from {fromTrain})");
-            }
-            else
-            {
-                _crewResult = Disp.Failure;
-                Main.ModEntry.Logger.Warning(
-                    $"[CrewMode] Request failed ({req.responseCode}): {req.error}");
-            }
+            _lastRegisteredTrain = toTrain;
+            _crewResult = Disp.Success;
+            Main.ModEntry.Logger.Log(
+                $"[CrewMode] Registered → [{locoType ?? "?"}] {toTrain} (from {fromTrain})");
+        }
+        else
+        {
+            _crewResult = Disp.Failure;
+            Main.ModEntry.Logger.Warning($"[CrewMode] Request failed: {result.Error}");
         }
     }
 
