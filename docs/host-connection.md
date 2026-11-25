@@ -16,18 +16,21 @@ When you run `/session start`, the bot posts the session config to
 `https://<host>-connect.<domain>/session-config`. That's the bot URL, two tokens
 minted for this session, and the crew voice channels.
 
-The two tokens are not interchangeable. The host token stays on the host and
-opens every bot endpoint. The client token is the one the host relays to its
-clients, and the bot only accepts it for the radio endpoints. So a client can
-move its own voice channel and read the channel list, and nothing else.
+The host token stays on the host and is the only credential in play. Clients are
+given no token and no bot URL: when a client needs the bot, it asks the host over
+the multiplayer packet channel and the host makes the call. The host only accepts
+a short list of routes for that, in `BotCall.cs`.
+
+The bot also sends a weaker `clientSecret`, which current builds ignore. It
+exists for any client that still calls the bot directly.
 
 ## Clients
 
 Clients get the session config from the host over the multiplayer packet
 channel, in `ConnectMpChannel.cs`. A client asks when it connects, and the host
 also pushes to everyone the moment `/session start` lands, so joining early
-works too. The crew channel list rides along with it, so a client never contacts
-the bot for anything but a voice switch.
+works too. What a client receives is the crew channel list and whether a session
+is open. Nothing else: a client never contacts the bot at all.
 
 Both sides exchange a protocol version with that config. dv-mp checks mod Ids at
 login but not versions, so a client on a different GRDNConnect build joins

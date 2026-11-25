@@ -23,14 +23,6 @@ public class GRDNConnectBehaviour : MonoBehaviour
 	private static string _sessionBotUrl    = null;
 	private static string _sessionBotSecret = null;
 
-	/// <summary>
-	/// The token handed to clients, which is weaker than the host's: the bot only
-	/// accepts it on the endpoints a client needs for radio and crew voice. Held
-	/// separately so the host's own token is never relayed over the packet channel.
-	/// Null when the bot sent none, in which case clients get the host token, which
-	/// is what builds before the token split did.
-	/// </summary>
-	private static string _sessionClientSecret = null;
 
 	/// <summary>
 	/// The bot's base URL for this session.
@@ -334,7 +326,14 @@ public class GRDNConnectBehaviour : MonoBehaviour
 				return;
 			}
 
-			if (ctx.Request.HttpMethod == "GET" && text == "/jobs")
+			// Liveness only, so the answer carries nothing about the session. Used to
+			// check that a tunnel reaches the mod, including while setting up
+			// Cloudflare Access (see docs/cloudflare-access.md).
+			if (ctx.Request.HttpMethod == "GET" && text == "/ping")
+			{
+				SendJson(ctx.Response, 200, "{\"ok\":true}");
+			}
+			else if (ctx.Request.HttpMethod == "GET" && text == "/jobs")
 			{
 				HandleGetJobs(ctx.Response);
 			}
@@ -672,29 +671,29 @@ public class GRDNConnectBehaviour : MonoBehaviour
 	// ── POST /session-config ──────────────────────────────────────────────────
 	// Called by the bot when an ops session opens (/session start), and again
 	// whenever the crew channel list changes.
-	// Body: { "botUrl": "...", "secret": "...", "clientSecret": "...", "channels": [...] }
+	// Body: { "botUrl": "...", "secret": "...", "channels": [...] }
 	//
-	// "secret" is this host's token and stays here. "clientSecret" is the weaker
-	// token relayed to clients, which the bot only honours on the radio endpoints.
-	// Stores values in static fields so the radio modes always have the current bot
-	// address without any UMM settings entry.
+	// "secret" is this host's token and never leaves the host. Stored in static
+	// fields so the radio modes always have the current bot address without any UMM
+	// settings entry.
 	private void HandleSessionConfig(HttpListenerRequest req, HttpListenerResponse res)
 	{
 		string json;
 		using (var sr = new StreamReader(req.InputStream, Encoding.UTF8))
 			json = sr.ReadToEnd();
 
-		string botUrl       = ExtractJsonString(json, "botUrl");
-		string secret       = ExtractJsonString(json, "secret");
-		string clientSecret = ExtractJsonString(json, "clientSecret");
+		string botUrl = ExtractJsonString(json, "botUrl");
+		string secret = ExtractJsonString(json, "secret");
+
+		// The bot also sends "clientSecret", the weaker token it used to hand to
+		// clients. Nothing reads it here: clients no longer call the bot, they ask
+		// the host to (see BotCall), so the only token in play is this host's.
 
 		if (!string.IsNullOrEmpty(botUrl))
 			_sessionBotUrl = botUrl.TrimEnd('/');
 		// Allow secret to be set to empty string to clear it
 		if (secret != null)
 			_sessionBotSecret = secret;
-		if (clientSecret != null)
-			_sessionClientSecret = clientSecret;
 
 		// Update live radio channel list (always safe to call — no-ops if no channels key)
 		RadioIntegration.UpdateChannelsFromJson(json);
@@ -706,8 +705,7 @@ public class GRDNConnectBehaviour : MonoBehaviour
 		// who joined before /session start would hold nothing until their next retry.
 		// Skipped internally when nothing changed since the last push.
 		ConnectMpChannel.BroadcastSessionConfig(
-			_sessionBotUrl,
-			ClientSecretForRelay,
+			HostHasBotConfig,
 			RadioIntegration.SessionChannelsJson ?? HostConfig.RadioChannelsJson ?? "[]");
 
 		SendJson(res, 200, "{\"ok\":true}");
@@ -720,44 +718,90 @@ public class GRDNConnectBehaviour : MonoBehaviour
 	/// session/settings values, never ActiveBotUrl, because that falls back to the
 	/// public default and would hand clients a URL with no matching secret.
 	/// </summary>
-	internal static (string url, string secret, string channelsJson) GetSessionConfigForClients() =>
-		(_sessionBotUrl ?? HostConfig.BotUrl ?? "",
-		 ClientSecretForRelay,
+	internal static (bool sessionActive, string channelsJson) GetSessionConfigForClients() =>
+		(HostHasBotConfig,
 		 RadioIntegration.SessionChannelsJson ?? HostConfig.RadioChannelsJson ?? "[]");
 
 	/// <summary>
-	/// The token clients are given. The bot's client token when it sent one, else
-	/// this host's own token, which is what a bot from before the token split
-	/// provides. Falls back to connect.cfg for a host running its own bot.
+	/// True once this host can reach the bot, which is what "an ops session is open"
+	/// means from a client's point of view. Clients are told this instead of being
+	/// given the URL and token, which they no longer need.
 	/// </summary>
-	private static string ClientSecretForRelay =>
-		!string.IsNullOrEmpty(_sessionClientSecret) ? _sessionClientSecret :
-		!string.IsNullOrEmpty(_sessionBotSecret)    ? _sessionBotSecret    :
-		HostConfig.BotSecret ?? "";
+	private static bool HostHasBotConfig =>
+		!string.IsNullOrEmpty(_sessionBotUrl ?? HostConfig.BotUrl)
+		&& !string.IsNullOrEmpty(_sessionBotSecret ?? HostConfig.BotSecret);
 
 	/// <summary>
 	/// Client side: config just arrived from the host over the packet channel.
 	/// Empty botUrl means the host has not started an ops session yet, so we keep
 	/// what we have and let the retry loop ask again.
 	/// </summary>
-	internal static void ApplySessionConfigFromHost(string botUrl, string secret, string channelsJson)
+	internal static void ApplySessionConfigFromHost(bool sessionActive, string channelsJson)
 	{
-		if (string.IsNullOrEmpty(botUrl))
+		if (!sessionActive)
 		{
-			Main.LogVerbose("[GRDNConnect] Host has no session config yet — will ask again.");
+			Main.LogVerbose("[GRDNConnect] Host has no ops session yet — will ask again.");
 			return;
 		}
 
-		_sessionBotUrl = botUrl.TrimEnd('/');
-		if (secret != null) _sessionBotSecret = secret;
+		_clientSessionActive = true;
 
 		// Channels ride along with the config, so a client needs no bot access to
-		// fill its radio dial. This replaces the 60 s /radio-channels poll every
-		// player used to run.
+		// fill its radio dial.
 		RadioIntegration.ApplyChannelsJson(channelsJson);
 
-		Main.ModEntry.Logger.Log(
-			$"[GRDNConnect] Client session config received — botUrl={_sessionBotUrl}");
+		Main.ModEntry.Logger.Log("[GRDNConnect] Client session config received.");
+	}
+
+	/// <summary>
+	/// Client side: the host has told us an ops session is open, so radio actions
+	/// are worth relaying. Replaces the old test of "do we hold a secret", which no
+	/// longer applies now that clients hold none.
+	/// </summary>
+	private static bool _clientSessionActive;
+
+	/// <summary>
+	/// Client side: forget what we learned from the last host. Called when a client
+	/// session starts or stops, so reconnecting to a different host starts clean
+	/// instead of inheriting "already configured" or "refused on version".
+	/// </summary>
+	internal static void ResetClientSessionState() => _clientSessionActive = false;
+
+	/// <summary>
+	/// Host side: run a bot call a client asked for, then send the answer back.
+	/// The route was checked against BotCall's allowlist before this is reached.
+	/// </summary>
+	/// <remarks>
+	/// The player is passed as object, not an MPAPI type: this file has to compile
+	/// without MultiplayerAPI.dll, so only ConnectMpChannel may name those types.
+	/// </remarks>
+	internal static void RelayBotCallForClient(
+		object sender, string senderName, byte requestId, string route, string bodyJson)
+	{
+		if (_instance == null)
+		{
+			ConnectMpChannel.SendRelayResult(sender, requestId, false, "", "host mod not running");
+			return;
+		}
+
+		_instance.StartCoroutine(RelayBotCall(sender, senderName, requestId, route, bodyJson));
+	}
+
+	private static IEnumerator RelayBotCall(
+		object sender, string senderName, byte requestId, string route, string bodyJson)
+	{
+		var result = new BotCallResult();
+		yield return BotCall.PostDirect(route, bodyJson, result);
+
+		// senderName is the player dv-mp authenticated, logged next to the request.
+		// The body still carries whatever identity the client claimed, which MPAPI
+		// gives the host no way to verify.
+		Main.LogVerbose(
+			$"[GRDNConnect] relayed {route} for {senderName}: " +
+			(result.Ok ? "ok" : $"failed ({result.Error})"));
+
+		ConnectMpChannel.SendRelayResult(
+			sender, requestId, result.Ok, result.ResponseJson, result.Error);
 	}
 
 	// ── Client config request loop ────────────────────────────────────────────
@@ -774,9 +818,9 @@ public class GRDNConnectBehaviour : MonoBehaviour
 
 		for (int attempt = 0; attempt < 40; attempt++)
 		{
-			// The secret is the thing a client is missing; the URL always resolves
-			// via the public default, so it proves nothing.
-			if (!string.IsNullOrEmpty(ActiveBotSecret)) yield break;
+			// Stop once the host has confirmed a session. Clients hold no secret
+			// now, so the old "do we have a secret" test no longer applies.
+			if (_clientSessionActive) yield break;
 
 			// Version refusal is terminal. Neither build changes mid-session, so
 			// asking again cannot help. The handler has already logged what to do.

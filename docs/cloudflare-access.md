@@ -62,8 +62,9 @@ Leave that as the only policy. A second policy set to Allow opens the door again
 ## 5. Check it works
 
 Open `https://<host>-connect.<domain>/ping` in a private browser window. You
-should get a Cloudflare block or login page. If you see the mod's JSON instead,
-Access isn't covering that hostname, so check the domain list in step 3.
+should get a Cloudflare block or login page. If you see `{"ok":true}` instead,
+Access isn't covering that hostname, so check the domain list in step 3. The game
+has to be running for that route to answer at all.
 
 Then try it with the token from the VPS:
 
@@ -71,8 +72,8 @@ Then try it with the token from the VPS:
 curl.exe -s -H "CF-Access-Client-Id: $env:CF_ACCESS_CLIENT_ID" -H "CF-Access-Client-Secret: $env:CF_ACCESS_CLIENT_SECRET" https://<host>-connect.<domain>/ping
 ```
 
-That should return the mod's `/ping` response. If you get HTML back, the headers
-aren't reaching Cloudflare or the token's wrong.
+That should return `{"ok":true}`. If you get HTML back, the headers aren't
+reaching Cloudflare or the token's wrong.
 
 Last, run `/session start` in Discord. The host's game log should say
 `Session config received`. If it doesn't, check the bot console for a 403 and
