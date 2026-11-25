@@ -111,10 +111,26 @@ public class GRDNConnectBehaviour : MonoBehaviour
 		try
 		{
 			_listener = new HttpListener();
-			_listener.Prefixes.Add($"http://*:{port}/");
+
+			// Loopback only. This used to be http://*:{port}/, which accepted
+			// connections from anywhere that could reach the machine. The bot does
+			// not need that: cloudflared runs on this PC and dials the listener
+			// locally, so the tunnel is the only way in from outside, and Cloudflare
+			// Access guards the tunnel.
+			//
+			// BOTH prefixes are registered on purpose. HttpListener matches a request
+			// against prefixes by its Host header, not by the address it arrived on,
+			// so a listener bound only to "localhost" answers 400 to a request whose
+			// Host is "127.0.0.1" and vice versa. cloudflared's config may use either
+			// spelling, as may a browser hitting the debug routes, and neither is
+			// reachable off-machine.
+			_listener.Prefixes.Add($"http://localhost:{port}/");
+			_listener.Prefixes.Add($"http://127.0.0.1:{port}/");
+
 			_listener.Start();
 			_activePort = port;
-			Main.ModEntry.Logger.Log($"[GRDNConnect] Listening on port {port}.");
+			Main.ModEntry.Logger.Log(
+				$"[GRDNConnect] Listening on 127.0.0.1:{port} and localhost:{port} (loopback only).");
 			((MonoBehaviour)this).StartCoroutine(ListenLoop());
 		}
 		catch (Exception ex)
@@ -302,14 +318,6 @@ public class GRDNConnectBehaviour : MonoBehaviour
 		string text = ctx.Request.Url.AbsolutePath.ToLower();
 		try
 		{
-			// /client-config is served by everyone — clients query the HOST's port
-			// to auto-fetch botUrl + secret without any manual UMM settings entry.
-			if (ctx.Request.HttpMethod == "GET" && text == "/client-config")
-			{
-				HandleClientConfig(ctx.Response);
-				return;
-			}
-
 			// Reject all other requests if this player is not the host/singleplayer.
 			// Checked per-request so the state is current (not locked in at startup).
 			if (!IsHostOrSingleplayer())
@@ -685,27 +693,6 @@ public class GRDNConnectBehaviour : MonoBehaviour
 
 		SendJson(res, 200, "{\"ok\":true}");
 	}
-
-	// ── GET /client-config ───────────────────────────────────────────────────
-	// Served by the HOST's mod so clients can auto-fetch botUrl + secret.
-	// NOT behind the IsHostOrSingleplayer guard — that's the whole point.
-	// Returns null fields if no session has been started yet (client retries).
-	private void HandleClientConfig(HttpListenerResponse res)
-	{
-		string url    = _sessionBotUrl    ?? HostConfig.BotUrl    ?? "";
-		string secret = _sessionBotSecret ?? HostConfig.BotSecret ?? "";
-
-		if (string.IsNullOrEmpty(url))
-		{
-			// Host hasn't run /session start yet — tell clients to retry
-			SendJson(res, 200, "{\"botUrl\":null,\"secret\":null}");
-			return;
-		}
-
-		SendJson(res, 200,
-			$"{{\"botUrl\":\"{Escape(url)}\",\"secret\":\"{Escape(secret)}\"}}");
-	}
-
 
 	// ── Session config accessors for the MP packet channel ────────────────────
 
