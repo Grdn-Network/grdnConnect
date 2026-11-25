@@ -64,8 +64,6 @@ public class GRDNConnectBehaviour : MonoBehaviour
 		// CommsRadioAPI.dll is present in lib/ at build time.
 #if COMMS_RADIO_API
 		RadioIntegration.TryInit(this);
-		// Poll the bot for the live channel list every 60 s.
-		RadioIntegration.StartChannelPolling(this);
 
 		// Verify Steam identity on startup — result is logged so you can confirm
 		// radio pushes will carry a Steam ID without needing to trigger a swap first.
@@ -689,7 +687,11 @@ public class GRDNConnectBehaviour : MonoBehaviour
 
 		// Push it straight out to any client already connected. Without this a client
 		// who joined before /session start would hold nothing until their next retry.
-		ConnectMpChannel.BroadcastSessionConfig(_sessionBotUrl, _sessionBotSecret);
+		// Skipped internally when nothing changed since the last push.
+		ConnectMpChannel.BroadcastSessionConfig(
+			_sessionBotUrl,
+			_sessionBotSecret,
+			RadioIntegration.SessionChannelsJson ?? HostConfig.RadioChannelsJson ?? "[]");
 
 		SendJson(res, 200, "{\"ok\":true}");
 	}
@@ -701,16 +703,17 @@ public class GRDNConnectBehaviour : MonoBehaviour
 	/// session/settings values, never ActiveBotUrl, because that falls back to the
 	/// public default and would hand clients a URL with no matching secret.
 	/// </summary>
-	internal static (string url, string secret) GetSessionConfigForClients() =>
+	internal static (string url, string secret, string channelsJson) GetSessionConfigForClients() =>
 		(_sessionBotUrl ?? HostConfig.BotUrl ?? "",
-		 _sessionBotSecret ?? HostConfig.BotSecret ?? "");
+		 _sessionBotSecret ?? HostConfig.BotSecret ?? "",
+		 RadioIntegration.SessionChannelsJson ?? HostConfig.RadioChannelsJson ?? "[]");
 
 	/// <summary>
 	/// Client side: config just arrived from the host over the packet channel.
 	/// Empty botUrl means the host has not started an ops session yet, so we keep
 	/// what we have and let the retry loop ask again.
 	/// </summary>
-	internal static void ApplySessionConfigFromHost(string botUrl, string secret)
+	internal static void ApplySessionConfigFromHost(string botUrl, string secret, string channelsJson)
 	{
 		if (string.IsNullOrEmpty(botUrl))
 		{
@@ -720,6 +723,11 @@ public class GRDNConnectBehaviour : MonoBehaviour
 
 		_sessionBotUrl = botUrl.TrimEnd('/');
 		if (secret != null) _sessionBotSecret = secret;
+
+		// Channels ride along with the config, so a client needs no bot access to
+		// fill its radio dial. This replaces the 60 s /radio-channels poll every
+		// player used to run.
+		RadioIntegration.ApplyChannelsJson(channelsJson);
 
 		Main.ModEntry.Logger.Log(
 			$"[GRDNConnect] Client session config received — botUrl={_sessionBotUrl}");
@@ -742,6 +750,10 @@ public class GRDNConnectBehaviour : MonoBehaviour
 			// The secret is the thing a client is missing; the URL always resolves
 			// via the public default, so it proves nothing.
 			if (!string.IsNullOrEmpty(ActiveBotSecret)) yield break;
+
+			// Version refusal is terminal. Neither build changes mid-session, so
+			// asking again cannot help. The handler has already logged what to do.
+			if (ConnectMpChannel.ProtocolMismatch) yield break;
 
 			// Hosting or singleplayer: the bot pushes to us directly.
 			if (IsHostOrSingleplayer()) yield break;

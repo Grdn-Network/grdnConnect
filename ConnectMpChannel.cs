@@ -30,8 +30,43 @@ using System.Runtime.CompilerServices;
 
 internal static class ConnectMpChannel
 {
+	/// <summary>
+	/// Wire format version for the two packets below. Bump it whenever a field is
+	/// added, removed or changes meaning, because dv-mp auto-serializes these and
+	/// a mismatched shape does not deserialize.
+	///
+	/// Host and client compare this before anything else. A mismatch is refused
+	/// rather than warned about: the packets genuinely do not line up, so there is
+	/// nothing useful to salvage. A difference in mod version alone, on the same
+	/// protocol, is only a warning.
+	///
+	/// 2: added Protocol/ModVersion to both packets and ChannelsJson to the reply.
+	/// 1: 0.93.0-beta.1 to beta.4. BotUrl + Secret only.
+	/// </summary>
+	internal const byte ProtocolVersion = 2;
+
 	/// <summary>True once event subscriptions are in place.</summary>
 	internal static bool TransportArmed { get; private set; }
+
+	/// <summary>
+	/// Client side: the host refused us on protocol version. Terminal, because
+	/// retrying cannot change either build, so the retry loop stops instead of
+	/// asking 40 times. The log line says what to do about it.
+	/// </summary>
+	internal static bool ProtocolMismatch { get; private set; }
+
+	internal static void NoteProtocolMismatch() => ProtocolMismatch = true;
+
+#if DVMP_API
+	/// <summary>
+	/// Last config broadcast to clients, so an unchanged re-push is skipped.
+	/// Cleared when the server stops, because a fresh session must broadcast even
+	/// if its config happens to be identical.
+	/// </summary>
+	private static string _lastBroadcast;
+
+	internal static void ResetBroadcastState() => _lastBroadcast = null;
+#endif
 
 	/// <summary>
 	/// Arm the transport. Safe to call repeatedly (mod load AND world load):
@@ -111,11 +146,19 @@ internal static class ConnectMpChannel
 	/// before /session start would sit with no secret until they reconnected.
 	/// No-op in singleplayer or when not hosting.
 	/// </summary>
-	internal static void BroadcastSessionConfig(string botUrl, string secret)
+	internal static void BroadcastSessionConfig(string botUrl, string secret, string channelsJson)
 	{
 #if DVMP_API
 		if (!TransportArmed) return;
-		try { ConnectMpTransport.SendConfigToAll(botUrl, secret); }
+
+		// Guard against a re-push of config that has not changed, so clients are not
+		// sent a packet that would tell them nothing new. The bot also filters on its
+		// side; this covers any caller that does not.
+		string stamp = $"{botUrl}\n{secret}\n{channelsJson}";
+		if (stamp == _lastBroadcast) return;
+		_lastBroadcast = stamp;
+
+		try { ConnectMpTransport.SendConfigToAll(botUrl, secret, channelsJson); }
 		catch (Exception ex)
 		{
 			Main.ModEntry.Logger.Warning("[GRDNConnect] config broadcast failed: " + ex.Message);
@@ -140,7 +183,12 @@ internal static class ConnectMpTransport
 	internal static void Init()
 	{
 		MPAPI.MultiplayerAPI.ServerStarted += OnServerStarted;
-		MPAPI.MultiplayerAPI.ServerStopped += () => { _server = null; _connectClients.Clear(); };
+		MPAPI.MultiplayerAPI.ServerStopped += () =>
+		{
+			_server = null;
+			_connectClients.Clear();
+			ConnectMpChannel.ResetBroadcastState();
+		};
 		MPAPI.MultiplayerAPI.ClientStarted += OnClientStarted;
 		MPAPI.MultiplayerAPI.ClientStopped += () => { _client = null; };
 
@@ -159,14 +207,42 @@ internal static class ConnectMpTransport
 
 		server.RegisterPacket<ConnectConfigRequestPacket>((packet, sender) =>
 		{
+			string clientVersion = string.IsNullOrEmpty(packet.ModVersion)
+				? "unknown" : packet.ModVersion;
+
+			// Protocol gate. dv-mp's own login check compares mod Ids but not
+			// versions, so a client on a different build gets this far looking
+			// healthy. Refuse here instead of handing over config that does not
+			// match the shape they can read.
+			if (packet.Protocol != ConnectMpChannel.ProtocolVersion)
+			{
+				_connectClients.Remove(sender);
+				Main.ModEntry.Logger.Warning(
+					$"[GRDNConnect] {sender.Username} runs GRDNConnect {clientVersion} " +
+					$"(config protocol {packet.Protocol}); this host runs {Main.ModVersion} " +
+					$"(protocol {ConnectMpChannel.ProtocolVersion}). No session config sent, so their radio " +
+					"and voice switching will not work until both sides run the same version.");
+
+				// Tell them why. Empty config, our versions, so their log names the
+				// problem rather than timing out in silence.
+				SendConfigTo(sender, "", "", "[]");
+				return;
+			}
+
 			if (!_connectClients.Contains(sender)) _connectClients.Add(sender);
 
 			// Serve whatever the host currently holds. When no session has been
-			// started yet both are empty; the client keeps asking on a slow retry
+			// started yet these are empty; the client keeps asking on a slow retry
 			// and the bot's /session start also triggers a broadcast, so the client
 			// gets it either way.
-			var (url, secret) = GRDNConnectBehaviour.GetSessionConfigForClients();
-			SendConfigTo(sender, url, secret);
+			var (url, secret, channelsJson) = GRDNConnectBehaviour.GetSessionConfigForClients();
+			SendConfigTo(sender, url, secret, channelsJson);
+
+			if (clientVersion != Main.ModVersion)
+				Main.ModEntry.Logger.Warning(
+					$"[GRDNConnect] {sender.Username} runs GRDNConnect {clientVersion}, " +
+					$"this host runs {Main.ModVersion}. Same config protocol, so this works, " +
+					"but matching versions is worth doing.");
 
 			Main.ModEntry.Logger.Log(
 				$"[GRDNConnect] {sender.Username} runs GRDNConnect; sent session config " +
@@ -181,7 +257,27 @@ internal static class ConnectMpTransport
 
 		client.RegisterPacket<ConnectConfigPacket>(packet =>
 		{
-			GRDNConnectBehaviour.ApplySessionConfigFromHost(packet.BotUrl, packet.Secret);
+			string hostVersion = string.IsNullOrEmpty(packet.ModVersion)
+				? "unknown" : packet.ModVersion;
+
+			if (packet.Protocol != ConnectMpChannel.ProtocolVersion)
+			{
+				ConnectMpChannel.NoteProtocolMismatch();
+				Main.ModEntry.Logger.Error(
+					$"[GRDNConnect] Version mismatch with the host. This game runs GRDNConnect " +
+					$"{Main.ModVersion} (config protocol {ConnectMpChannel.ProtocolVersion}), the host runs " +
+					$"{hostVersion} (protocol {packet.Protocol}). Radio and crew voice switching " +
+					"are off for this session. Install the host's version of GRDNConnect.");
+				return;
+			}
+
+			if (hostVersion != Main.ModVersion)
+				Main.ModEntry.Logger.Warning(
+					$"[GRDNConnect] Host runs GRDNConnect {hostVersion}, this game runs " +
+					$"{Main.ModVersion}. Compatible, but worth matching.");
+
+			GRDNConnectBehaviour.ApplySessionConfigFromHost(
+				packet.BotUrl, packet.Secret, packet.ChannelsJson);
 		});
 
 		Main.ModEntry.Logger.Log("[GRDNConnect] client session started; config handler registered.");
@@ -193,8 +289,11 @@ internal static class ConnectMpTransport
 	internal static void SendConfigRequest()
 	{
 		if (_client == null) return;
-		((MPAPI.Interfaces.IClient)_client).SendPacketToServer(
-			new ConnectConfigRequestPacket { Version = 1 });
+		((MPAPI.Interfaces.IClient)_client).SendPacketToServer(new ConnectConfigRequestPacket
+		{
+			Protocol   = ConnectMpChannel.ProtocolVersion,
+			ModVersion = Main.ModVersion,
+		});
 		Main.LogVerbose("[GRDNConnect] session config requested from the host.");
 	}
 
@@ -203,42 +302,60 @@ internal static class ConnectMpTransport
 	internal static bool HasClientSession() => _client != null;
 
 	[MethodImpl(MethodImplOptions.NoInlining)]
-	private static void SendConfigTo(MPAPI.Interfaces.IPlayer player, string botUrl, string secret)
+	private static void SendConfigTo(
+		MPAPI.Interfaces.IPlayer player, string botUrl, string secret, string channelsJson)
 	{
 		((MPAPI.Interfaces.IServer)_server).SendPacketToPlayer(new ConnectConfigPacket
 		{
-			BotUrl = botUrl ?? "",
-			Secret = secret ?? "",
+			Protocol     = ConnectMpChannel.ProtocolVersion,
+			ModVersion   = Main.ModVersion,
+			BotUrl       = botUrl ?? "",
+			Secret       = secret ?? "",
+			ChannelsJson = channelsJson ?? "[]",
 		}, player);
 	}
 
 	[MethodImpl(MethodImplOptions.NoInlining)]
-	internal static void SendConfigToAll(string botUrl, string secret)
+	internal static void SendConfigToAll(string botUrl, string secret, string channelsJson)
 	{
 		if (_server == null) return;
 		foreach (var obj in _connectClients)
-			SendConfigTo((MPAPI.Interfaces.IPlayer)obj, botUrl, secret);
+			SendConfigTo((MPAPI.Interfaces.IPlayer)obj, botUrl, secret, channelsJson);
 		if (_connectClients.Count > 0)
 			Main.ModEntry.Logger.Log(
 				$"[GRDNConnect] pushed session config to {_connectClients.Count} client(s).");
 	}
 }
 
-/// <summary>Client to server: "this client runs GRDNConnect, send me config." Auto-serialized.</summary>
+/// <summary>
+/// Client to server: "this client runs GRDNConnect, send me config." Carries both
+/// versions so the host can refuse an incompatible protocol and name the build in
+/// its log. Auto-serialized.
+/// </summary>
 public class ConnectConfigRequestPacket : MPAPI.Interfaces.Packets.IPacket
 {
-	public byte Version { get; set; }
+	public byte   Protocol   { get; set; }
+	public string ModVersion { get; set; }
 }
 
 /// <summary>
-/// Server to client: the session's bot URL and per-session secret. Empty strings mean
-/// the host has not started an ops session yet, and the client should keep asking.
-/// Auto-serialized.
+/// Server to client: the session's bot URL, per-session secret and crew channel list.
+/// Empty BotUrl means the host has not started an ops session yet and the client should
+/// keep asking. A Protocol that does not match the client's is a refusal, whatever else
+/// the packet holds. Auto-serialized.
 /// </summary>
 public class ConnectConfigPacket : MPAPI.Interfaces.Packets.IPacket
 {
-	public string BotUrl { get; set; }
-	public string Secret { get; set; }
+	public byte   Protocol   { get; set; }
+	public string ModVersion { get; set; }
+	public string BotUrl     { get; set; }
+	public string Secret     { get; set; }
+
+	/// <summary>
+	/// The channels array from the bot's /session-config, relayed verbatim so clients
+	/// need no bot access of their own. Parsed by RadioIntegration.ParseChannels.
+	/// </summary>
+	public string ChannelsJson { get; set; }
 }
 
 #endif
