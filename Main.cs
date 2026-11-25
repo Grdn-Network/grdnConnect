@@ -21,6 +21,12 @@ public class Main
 			ModEntry.Logger.Log(message);
 	}
 
+	/// <summary>
+	/// This mod's version as UMM reports it, for the host/client version exchange
+	/// in ConnectMpChannel. Never null, so it is safe to put straight in a packet.
+	/// </summary>
+	internal static string ModVersion => ModEntry?.Info?.Version ?? "unknown";
+
 	public static bool Load(UnityModManager.ModEntry modEntry)
 	{
 		ModEntry = modEntry;

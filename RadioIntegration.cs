@@ -37,6 +37,13 @@ public static class RadioIntegration
             : ParseChannels(HostConfig.RadioChannelsJson);
 
     /// <summary>
+    /// The channels array exactly as the bot sent it, kept so the host can relay it
+    /// to clients over the packet channel without re-encoding. Null until the first
+    /// /session-config push, which is when callers fall back to connect.cfg.
+    /// </summary>
+    internal static string SessionChannelsJson { get; private set; }
+
+    /// <summary>
     /// Parses the "channels" array from a /session-config JSON body and stores it.
     /// Called by GRDNConnectBehaviour.HandleSessionConfig on every push.
     /// </summary>
@@ -44,8 +51,24 @@ public static class RadioIntegration
     {
         string arr = ExtractJsonArray(sessionConfigJson, "channels");
         if (arr == null) return;
-        var channels = ParseChannels(arr);
-        _sessionChannels = channels;
+        ApplyChannelsJson(arr);
+    }
+
+    /// <summary>
+    /// Stores a bare channels array, from the bot on the host or from the host's
+    /// config packet on a client. A null or empty array is ignored rather than
+    /// wiping a good list, because an empty push is what a host with no session
+    /// started sends.
+    /// </summary>
+    internal static void ApplyChannelsJson(string channelsJson)
+    {
+        if (string.IsNullOrWhiteSpace(channelsJson)) return;
+
+        var channels = ParseChannels(channelsJson);
+        if (channels.Count == 0 && _sessionChannels.Count > 0) return;
+
+        SessionChannelsJson = channelsJson;
+        _sessionChannels    = channels;
         Main.ModEntry.Logger.Log($"[GRDNConnect] Radio channels updated: {channels.Count} channel(s).");
     }
 
@@ -366,51 +389,15 @@ public static class RadioIntegration
     internal static string Esc(string s) =>
         s?.Replace("\\", "\\\\").Replace("\"", "\\\"") ?? "";
 
-    // ── Channel polling — self-serve for clients joining after session start ──
-    // Clients never receive the bot's /session-config push (that goes to the host).
-    // This coroutine GETs /radio-channels from the bot URL every 60 seconds so any
-    // client with BotPushUrl set always has a live channel list in GRDN RADIO.
-    internal static void StartChannelPolling(MonoBehaviour host)
-    {
-        host.StartCoroutine(PollChannelsLoop());
-    }
-
-    private static IEnumerator PollChannelsLoop()
-    {
-        // Short delay on startup — let the game settle and session config arrive first
-        yield return new WaitForSeconds(15f);
-
-        while (true)
-        {
-            string url = GRDNConnectBehaviour.ActiveBotUrl?.TrimEnd('/');
-            if (!string.IsNullOrEmpty(url))
-            {
-                using (var req = new UnityWebRequest(url + "/radio-channels", "GET"))
-                {
-                    req.downloadHandler = new DownloadHandlerBuffer();
-                    string secret = GRDNConnectBehaviour.ActiveBotSecret;
-                    if (!string.IsNullOrEmpty(secret))
-                        req.SetRequestHeader("x-secret", secret);
-
-                    yield return req.SendWebRequest();
-
-                    if (req.error == null)
-                    {
-                        string json = req.downloadHandler.text;
-                        if (!string.IsNullOrEmpty(json))
-                        {
-                            int before = _sessionChannels.Count;
-                            UpdateChannelsFromJson(json);
-                            if (_sessionChannels.Count != before)
-                                Main.ModEntry.Logger.Log(
-                                    $"[GRDNConnect] Channel poll: {_sessionChannels.Count} channel(s) (was {before})");
-                        }
-                    }
-                }
-            }
-            yield return new WaitForSeconds(60f);
-        }
-    }
+    // ── Channel delivery ──────────────────────────────────────────────────────
+    // Nothing here runs on a timer. The channel list arrives:
+    //
+    //   Host   — in the bot's /session-config push, which the bot sends when the
+    //            Discord channel list actually changes.
+    //   Client — in ConnectConfigPacket.ChannelsJson from the host, on request at
+    //            join and on any change after.
+    //
+    // No code path polls the bot for channels.
 
     // ── Steam identity ────────────────────────────────────────────────────────
     // Returns the local player's Steam ID64 and display name.
@@ -632,9 +619,10 @@ public static class RadioIntegration
 {
     public static void TryInit(UnityEngine.MonoBehaviour host) { }
     internal static void UpdateChannelsFromJson(string json) { }
+    internal static void ApplyChannelsJson(string channelsJson) { }
+    internal static string SessionChannelsJson => null;
     internal static string GetPlayerTrainNumber() => null;
     internal static string Esc(string s) => s ?? "";
     internal static (ulong id, string name) GetLocalSteamInfo() => (0, "");
-    internal static void StartChannelPolling(UnityEngine.MonoBehaviour host) { }
 }
 #endif
