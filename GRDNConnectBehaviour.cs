@@ -27,11 +27,30 @@ public class GRDNConnectBehaviour : MonoBehaviour
 	/// <summary>
 	/// The bot's base URL for this session.
 	/// Priority: session-config push → connect.cfg → public default (GRDNDefaults.BotUrl).
+	/// A pushed address has already been checked against the pinned bots; a cfg
+	/// address is checked here, by the same rule.
 	/// </summary>
 	internal static string ActiveBotUrl =>
-		!string.IsNullOrEmpty(_sessionBotUrl)           ? _sessionBotUrl           :
-		!string.IsNullOrEmpty(HostConfig.BotUrl)        ? HostConfig.BotUrl        :
-		GRDNDefaults.BotUrl;
+		!string.IsNullOrEmpty(_sessionBotUrl) ? _sessionBotUrl : ConfiguredOrDefaultBotUrl;
+
+	/// <summary>
+	/// connect.cfg's bot_url when it parses and is a safe address, otherwise the
+	/// compiled default. Anything else is skipped and logged once per load.
+	/// </summary>
+	private static string ConfiguredOrDefaultBotUrl
+	{
+		get
+		{
+			if (string.IsNullOrEmpty(HostConfig.BotUrl)) return GRDNDefaults.BotUrl;
+
+			if (Uri.TryCreate(HostConfig.BotUrl, UriKind.Absolute, out Uri cfg)
+				&& IsSafeBotAddress(cfg))
+				return HostConfig.BotUrl;
+
+			LogSkippedCfgAddressOnce();
+			return GRDNDefaults.BotUrl;
+		}
+	}
 
 	/// <summary>
 	/// The bot's shared secret for this session.
@@ -48,6 +67,9 @@ public class GRDNConnectBehaviour : MonoBehaviour
 	// drive one log write per request.
 	private static DateTime _lastRefusalLog = DateTime.MinValue;
 	private const int RefusalLogQuietSeconds = 60;
+
+	// Said once per load, not per call: the cfg address is read on every bot call.
+	private static bool _loggedCfgAddressSkipped;
 
 	/// <summary>
 	/// A host accepts a session-config push from its configured bot or from the
@@ -67,8 +89,7 @@ public class GRDNConnectBehaviour : MonoBehaviour
 
 		if (!string.IsNullOrEmpty(HostConfig.BotUrl)
 			&& Uri.TryCreate(HostConfig.BotUrl, UriKind.Absolute, out parsed)
-			&& (parsed.IsLoopback
-				|| string.Equals(parsed.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)))
+			&& IsSafeBotAddress(parsed))
 			bots.Add(parsed);
 
 		if (Uri.TryCreate(GRDNDefaults.BotUrl, UriKind.Absolute, out parsed)
@@ -77,6 +98,14 @@ public class GRDNConnectBehaviour : MonoBehaviour
 
 		return bots;
 	}
+
+	/// <summary>
+	/// An address the host token may be sent to: loopback, or https. The token
+	/// never travels in cleartext off the machine.
+	/// </summary>
+	private static bool IsSafeBotAddress(Uri u) =>
+		u.IsLoopback
+		|| string.Equals(u.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase);
 
 	/// <summary>Same scheme, host and port. Path and query are not compared,
 	/// since those stay on the bot's own side.</summary>
@@ -106,6 +135,17 @@ public class GRDNConnectBehaviour : MonoBehaviour
 			if (SamePlace(pushed, bot)) return Rebuild(pushed);
 
 		return null;
+	}
+
+	private static void LogSkippedCfgAddressOnce()
+	{
+		if (_loggedCfgAddressSkipped) return;
+		_loggedCfgAddressSkipped = true;
+
+		Main.ModEntry.Logger.Warning(
+			"[GRDNConnect] bot_url in connect.cfg cannot be used: it has to be an " +
+			"https address, or a loopback address on this machine. Using " +
+			$"{GRDNDefaults.BotUrl} instead. Change the line or remove it.");
 	}
 
 	private static void LogRefusedPush()
@@ -736,7 +776,12 @@ public class GRDNConnectBehaviour : MonoBehaviour
 			string.IsNullOrEmpty(s) ? "(empty)" :
 			(s.Length <= 4 ? "****" : s.Substring(0, 4) + "****");
 
-		string source = !string.IsNullOrEmpty(sessionUrl) ? "session-config (pushed by bot)" : "connect.cfg (bot_url)";
+		// Report where activeUrl actually came from. A cfg bot_url that is not a
+		// safe address is skipped, so its presence does not mean it is in use.
+		string source =
+			!string.IsNullOrEmpty(sessionUrl)  ? "session-config (pushed by bot)" :
+			activeUrl == HostConfig.BotUrl     ? "connect.cfg (bot_url)"          :
+			"compiled default";
 
 		var sb = new StringBuilder();
 		sb.Append("{");
