@@ -142,15 +142,10 @@ make sure step 2 actually took effect.
 
 ## The token expires
 
-Service tokens have a duration, and the default is one year. When it lapses
-nothing announces it: the bot keeps sending headers Cloudflare no longer
-accepts, every bot-to-host call starts coming back 401, and Start Session stops
-reaching hosts. It looks exactly like the lockout below, a year after you last
-thought about this file.
-
-Check the expiry on the token when you create it and put that date in a
-calendar, with a reminder a couple of weeks ahead. Don't record it here: this
-repo is public, and the date tells anyone reading when the lock lapses.
+Service tokens are created with a duration and stop working at the end of it.
+Nothing announces the lapse, so the symptom is Start Session no longer reaching
+hosts and bot-to-host calls returning 401. If that happens and nothing else
+changed, check the token before anything else.
 
 Renewing is the same as step 1: make a new token, put it in `.env`, restart the
 bot, then delete the old one. The Access application and policy stay as they
