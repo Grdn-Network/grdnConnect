@@ -4,11 +4,10 @@ The mod's HTTP listener only accepts local connections now. The one way in from
 outside is the Cloudflare tunnel at `<host>-connect.<domain>`. Those hostnames
 are public and easy to guess, so the tunnel needs a lock on it.
 
-The routes behind it carry no auth of their own, by design. The bot and the mod
-have no shared secret to check at that layer that would not also have to ship
-inside the mod, which is issue #8. So the lock belongs in front of the tunnel,
-where Cloudflare already knows both ends, and until it is on, an unguarded
-tunnel is reachable by anyone who finds the hostname.
+The lock belongs in front of the tunnel rather than inside the mod. Any secret
+the mod could check would have to ship inside the mod, where it is readable by
+anyone (issue #8). Cloudflare already knows both ends, so it is the right place
+to put it.
 
 This gives the bot a service token and shuts the door on everyone else. It works
 on the free Zero Trust plan and doesn't change the tunnels themselves.
@@ -111,10 +110,11 @@ policies**. Without it, a request with no token gets a redirect to a login page,
 so the bot would see HTML where it expects JSON. With it, it gets a clean 401.
 
 There is also an account-wide **Strict service token authentication** under
-Access settings. Accounts created on or after 2026-10-05 have it on and can't
-turn it off. If yours is older, turning it on is worth doing: failed service
-token requests get 401 or 403 instead of a login redirect, and only Service Auth
-policies can authorize.
+Access settings. Newer accounts have it on by default and cannot turn it off; if
+yours is older, turning it on is worth doing. Failed service token requests then
+get 401 or 403 instead of a login redirect, and only Service Auth policies can
+authorize. Cloudflare documents it under Access service tokens:
+https://developers.cloudflare.com/cloudflare-one/access-controls/service-credentials/service-tokens/
 
 ## 6. Check it works
 
