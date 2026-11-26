@@ -373,7 +373,7 @@ public static class RadioIntegration
     //
     //   Host   — in the bot's /session-config push, which the bot sends when the
     //            Discord channel list actually changes.
-    //   Client — in ConnectConfigPacket.ChannelsJson from the host, on request at
+    //   Client — in ConnectConfigV3Packet.ChannelsJson from the host, on request at
     //            join and on any change after.
     //
     // No code path polls the bot for channels.
