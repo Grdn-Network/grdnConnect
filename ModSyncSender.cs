@@ -13,9 +13,13 @@
 //   Client                      -> optional
 //   Host                        -> host
 //   Incompatible                -> skipped
+//
+// A mod that a required mod depends on is then promoted to required, whatever
+// DVMP calls it. See PromoteRequirements.
 
 using System;
 using System.Collections;
+using System.Collections.Generic;
 using System.Reflection;
 using System.Text;
 using UnityEngine;
@@ -142,21 +146,35 @@ public class ModSyncSender : MonoBehaviour
     // ── Build { "mods": [ { id, name, version, url, category }, ... ] } ──────────
     private static string BuildScanJson(out int count)
     {
-        count = 0;
-        var sb = new StringBuilder();
-        sb.Append("{\"mods\":[");
-        bool first = true;
+        // Classify first, emit second, because a mod's category can still change
+        // once every other mod's requirements are known.
+        var included = new List<UnityModManager.ModEntry>();
+        var category = new Dictionary<string, string>();
 
         foreach (var entry in UnityModManager.modEntries)
         {
             if (entry == null || !entry.Enabled || entry.Info == null) continue;
 
             string id = entry.Info.Id;
-            if (string.IsNullOrEmpty(id)) continue;
+            if (string.IsNullOrEmpty(id) || category.ContainsKey(id)) continue;
 
-            string category = CategoryFor(id);
-            if (category == null) continue; // Incompatible with multiplayer
+            string cat = CategoryFor(id);
+            if (cat == null) continue; // Incompatible with multiplayer
 
+            category[id] = cat;
+            included.Add(entry);
+        }
+
+        PromoteRequirements(included, category);
+
+        count = 0;
+        var sb = new StringBuilder();
+        sb.Append("{\"mods\":[");
+        bool first = true;
+
+        foreach (var entry in included)
+        {
+            string id      = entry.Info.Id;
             string name    = string.IsNullOrEmpty(entry.Info.DisplayName) ? id : entry.Info.DisplayName;
             string version = entry.Info.Version ?? "";
             string url     = TrustedUrl(entry.Info.HomePage);
@@ -168,13 +186,58 @@ public class ModSyncSender : MonoBehaviour
             sb.Append($"\"name\":\"{Esc(name)}\",");
             sb.Append($"\"version\":\"{Esc(version)}\",");
             sb.Append($"\"url\":\"{Esc(url)}\",");
-            sb.Append($"\"category\":\"{category}\"");
+            sb.Append($"\"category\":\"{category[id]}\"");
             sb.Append("}");
             count++;
         }
 
         sb.Append("]}");
         return sb.ToString();
+    }
+
+    // A mod that a required mod depends on is itself required, whatever DVMP calls
+    // it. UMM will not load a mod whose requirement is missing, so a player who
+    // skips the dependency loses the mod that needed it, and dv-mp then refuses
+    // the join over that mod. The live case is CommsRadioAPI, which dv-mp
+    // hardcodes as Client while GRDNConnect lists it under Requirements.
+    //
+    // Repeats to a fixpoint because requirements chain. Every pass that changes
+    // anything promotes at least one mod, and promotion is one way, so the loop
+    // ends after at most one pass per mod.
+    private static void PromoteRequirements(
+        List<UnityModManager.ModEntry> included,
+        Dictionary<string, string> category)
+    {
+        var promoted = new List<string>();
+        bool changed = true;
+
+        while (changed)
+        {
+            changed = false;
+
+            foreach (var entry in included)
+            {
+                if (category[entry.Info.Id] != "required") continue;
+
+                // UMM has already parsed "Id-1.2.3" into key and version here, so
+                // these keys are plain ids and need no stripping of our own.
+                foreach (string needed in entry.Requirements.Keys)
+                {
+                    string current;
+                    if (!category.TryGetValue(needed, out current) || current == "required")
+                        continue;
+
+                    category[needed] = "required";
+                    promoted.Add(needed);
+                    changed = true;
+                }
+            }
+        }
+
+        if (promoted.Count > 0)
+            Main.ModEntry.Logger.Log(
+                "[ModSync] Promoted to required as a dependency: "
+                + string.Join(", ", promoted.ToArray()));
     }
 
     // Only pass through github / nexus homepages; the bot keeps its curated link
