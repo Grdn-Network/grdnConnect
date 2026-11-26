@@ -23,7 +23,7 @@ Three hostnames, and only one of them is in scope:
 | `grdn.<domain>` | host PC, port 7245 (Remote Dispatch) | leave open |
 
 `connect.<domain>` is the direction the mod calls. The mod ships to hosts, so any
-credential compiled into it is public — that is issue #8, and a service token in
+credential compiled into it is public. That is issue #8, and a service token in
 the DLL would be the same bug in new clothes. That hostname is protected by the
 session token the bot mints (every route on it requires one) plus WAF and rate
 limiting, not by Access. `grdn.<domain>` is Remote Dispatch, which people open in
@@ -31,7 +31,7 @@ a browser.
 
 So never use `*.<domain>` as the application domain. It would match all three and
 take the whole network down. `*-connect` does not match `connect`, because the
-wildcard needs something before the hyphen — that is why the naming works.
+wildcard needs something before the hyphen, which is why the naming works.
 
 ## Order matters
 
@@ -77,13 +77,13 @@ Open **Access controls**, then **Applications**, then **Add an application**.
 1. Choose **Self-hosted and private**.
 2. If a sub-picker offers Private destinations / Workers / **Public DNS** /
    Service auth, choose **Public DNS**. The host tunnels are public hostnames.
-   "Service auth" there is not the app type — Service Auth is the *policy*
+   "Service auth" there is not the app type. Service Auth is the *policy*
    action, set in step 4.
 3. Name it `GRDN Connect hosts`.
 4. For the application domain, enter subdomain `*-connect` with your domain.
    Re-read the warning above: not `*`.
-5. If the wildcard is refused, list the tunnels one at a time — `red-connect`,
-   and so on for every name in `host-tunnels.json` — and add a line whenever a
+5. If the wildcard is refused, list the tunnels one at a time (`red-connect`,
+   and so on for every name in `host-tunnels.json`) and add a line whenever a
    host joins.
 
 Cloudflare's own docs describe this as "Add public hostname" with a Domain
@@ -93,7 +93,7 @@ hostname.
 ## 4. Make the policy service token only
 
 1. Name the policy `bot service token only`.
-2. Set Action to **Service Auth**. Not Allow — Allow prompts for an identity
+2. Set Action to **Service Auth**. Not Allow, which prompts for an identity
    provider login instead of requiring the token.
 3. Under Configure rules, set Include to selector **Service Token** and pick
    `grdn-bot`.
@@ -124,7 +124,7 @@ Open `https://<host>-connect.<domain>/ping` in a private browser window. You
 should get a Cloudflare block, a 401, or a login page. If you see `{"ok":true}`
 instead, Access isn't covering that hostname, so check the domain in step 3.
 
-Then try it with the token. Paste the literal values — the `.env` entries are
+Then try it with the token. Paste the literal values. The `.env` entries are
 loaded by the bot process, not by your shell, so `$env:CF_ACCESS_CLIENT_ID`
 would be empty and you'd send blank headers and blame the token:
 
@@ -138,6 +138,21 @@ reaching Cloudflare or the token's wrong.
 Last, run `/session start` in Discord. The host's game log should say
 `Session config received`. If it doesn't, check the bot console for a 403 and
 make sure step 2 actually took effect.
+
+## The token expires
+
+Service tokens have a duration, and the default is one year. When it lapses
+nothing announces it: the bot keeps sending headers Cloudflare no longer
+accepts, every bot-to-host call starts coming back 401, and Start Session stops
+reaching hosts. It looks exactly like the lockout below, a year after you last
+thought about this file.
+
+Write the expiry date somewhere you will actually see it, with a reminder a
+couple of weeks ahead. Renewing is the same as step 1: make a new token, put it
+in `.env`, restart the bot, then delete the old one. The Access application and
+policy stay as they are, because the policy matches the token by name.
+
+Current token: `grdn-bot`, expires **2027-11-25**.
 
 ## If you lock yourself out
 
