@@ -50,24 +50,34 @@ public class GRDNConnectBehaviour : MonoBehaviour
 	private const int RefusalLogQuietSeconds = 60;
 
 	/// <summary>
-	/// The one bot this host will accept a session-config push from: connect.cfg's
-	/// bot_url when the host set a usable one, otherwise the compiled default.
-	/// Null only when neither parses, which refuses every push.
+	/// A host accepts a session-config push from its configured bot or from the
+	/// official one: connect.cfg's bot_url when the host set a usable one, and
+	/// GRDNDefaults.BotUrl. Both, because a stale bot_url would otherwise refuse
+	/// the official bot, and the official address alone would refuse a
+	/// self-hosted one. Neither is set by whoever sent the push.
 	/// </summary>
-	private static Uri PinnedBot
+	private static List<Uri> PinnedBots()
 	{
-		get
-		{
-			Uri pinned;
-			if (!string.IsNullOrEmpty(HostConfig.BotUrl)
-				&& Uri.TryCreate(HostConfig.BotUrl, UriKind.Absolute, out pinned))
-				return pinned;
+		var bots = new List<Uri>(2);
+		Uri parsed;
 
-			// A malformed bot_url in connect.cfg pins nothing, so fall back to the
-			// compiled default rather than accepting whatever arrives.
-			return Uri.TryCreate(GRDNDefaults.BotUrl, UriKind.Absolute, out pinned) ? pinned : null;
-		}
+		if (!string.IsNullOrEmpty(HostConfig.BotUrl)
+			&& Uri.TryCreate(HostConfig.BotUrl, UriKind.Absolute, out parsed))
+			bots.Add(parsed);
+
+		if (Uri.TryCreate(GRDNDefaults.BotUrl, UriKind.Absolute, out parsed)
+			&& !bots.Any(b => SamePlace(b, parsed)))
+			bots.Add(parsed);
+
+		return bots;
 	}
+
+	/// <summary>Same scheme, host and port. Path and query are not compared,
+	/// since those stay on the bot's own side.</summary>
+	private static bool SamePlace(Uri a, Uri b) =>
+		string.Equals(a.Scheme, b.Scheme, StringComparison.OrdinalIgnoreCase)
+		&& string.Equals(a.Host, b.Host, StringComparison.OrdinalIgnoreCase)
+		&& a.Port == b.Port;
 
 	/// <summary>
 	/// Scheme, host, port and path rebuilt from the parsed form, so the result
@@ -79,22 +89,17 @@ public class GRDNConnectBehaviour : MonoBehaviour
 		(u.Scheme + "://" + u.Authority + u.AbsolutePath).TrimEnd('/');
 
 	/// <summary>
-	/// A pushed botUrl, rebuilt, when it is the pinned bot: same scheme, host and
-	/// port. Null when it is anything else. Path and query are not compared, since
-	/// those stay on the bot's own side.
+	/// A pushed botUrl, rebuilt, when it is one of the pinned bots. Null when it
+	/// is anything else.
 	/// </summary>
 	private static string AcceptedBotUrl(string pushedUrl)
 	{
-		Uri pinned = PinnedBot;
-		if (pinned == null) return null;
 		if (!Uri.TryCreate(pushedUrl, UriKind.Absolute, out Uri pushed)) return null;
 
-		bool samePlace =
-			string.Equals(pushed.Scheme, pinned.Scheme, StringComparison.OrdinalIgnoreCase)
-			&& string.Equals(pushed.Host, pinned.Host, StringComparison.OrdinalIgnoreCase)
-			&& pushed.Port == pinned.Port;
+		foreach (Uri bot in PinnedBots())
+			if (SamePlace(pushed, bot)) return Rebuild(pushed);
 
-		return samePlace ? Rebuild(pushed) : null;
+		return null;
 	}
 
 	private static void LogRefusedPush()
@@ -105,12 +110,15 @@ public class GRDNConnectBehaviour : MonoBehaviour
 			return;
 
 		_lastRefusalLog = now;
-		Uri pinned = PinnedBot;
+		List<Uri> bots = PinnedBots();
+		string addresses = bots.Count == 0
+			? "(no usable bot address)"
+			: string.Join(" or ", bots.Select(Rebuild));
+
 		Main.ModEntry.Logger.Warning(
 			"[GRDNConnect] Dropped a /session-config push: its botUrl is not " +
-			$"{(pinned == null ? "(no usable bot address)" : Rebuild(pinned))}. The bot " +
-			"address and token are unchanged. If the bot moved, set bot_url in " +
-			"connect.cfg to its new address.");
+			$"{addresses}. The bot address and token are unchanged. If the bot moved, " +
+			"set bot_url in connect.cfg to its new address.");
 	}
 
 	private void Awake()
