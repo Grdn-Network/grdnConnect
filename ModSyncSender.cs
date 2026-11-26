@@ -26,6 +26,10 @@ public class ModSyncSender : MonoBehaviour
 {
     internal static ModSyncSender Instance;
 
+    // UnityWebRequest waits indefinitely by default, so a connection that opens
+    // and then stalls would leave this coroutine running for the session.
+    private const int RequestTimeoutSeconds = 15;
+
     private void Awake() => Instance = this;
 
     // ── Reflection cache for Multiplayer.API.ModCompatibilityManager ────────────
@@ -121,6 +125,7 @@ public class ModSyncSender : MonoBehaviour
         {
             req.uploadHandler   = new UploadHandlerRaw(raw);
             req.downloadHandler = new DownloadHandlerBuffer();
+            req.timeout         = RequestTimeoutSeconds;
             req.SetRequestHeader("Content-Type", "application/json");
             if (!string.IsNullOrEmpty(secret))
                 req.SetRequestHeader("x-secret", secret);
