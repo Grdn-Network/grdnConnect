@@ -256,25 +256,19 @@ public class GRDNConnectBehaviour : MonoBehaviour
 		{
 			_listener = new HttpListener();
 
-			// Loopback only. This used to be http://*:{port}/, which accepted
-			// connections from anywhere that could reach the machine. The bot does
-			// not need that: cloudflared runs on this PC and dials the listener
-			// locally, so the tunnel is the only way in from outside, and Cloudflare
-			// Access guards the tunnel.
+			// One prefix, accepting any Host. HttpListener matches a request against
+			// its prefixes by the Host header, not by the address it arrived on, and
+			// cloudflared forwards the public hostname as Host, so a loopback prefix
+			// answers 400 to every request that comes through the tunnel.
 			//
-			// BOTH prefixes are registered on purpose. HttpListener matches a request
-			// against prefixes by its Host header, not by the address it arrived on,
-			// so a listener bound only to "localhost" answers 400 to a request whose
-			// Host is "127.0.0.1" and vice versa. cloudflared's config may use either
-			// spelling, as may a browser hitting the debug routes, and neither is
-			// reachable off-machine.
-			_listener.Prefixes.Add($"http://localhost:{port}/");
-			_listener.Prefixes.Add($"http://127.0.0.1:{port}/");
+			// The socket therefore listens on every interface, and the loopback check
+			// at the top of HandleRequest is what keeps the listener local.
+			_listener.Prefixes.Add($"http://*:{port}/");
 
 			_listener.Start();
 			_activePort = port;
 			Main.ModEntry.Logger.Log(
-				$"[GRDNConnect] Listening on 127.0.0.1:{port} and localhost:{port} (loopback only).");
+				$"[GRDNConnect] Listening on port {port}; only requests from this PC are answered.");
 			((MonoBehaviour)this).StartCoroutine(ListenLoop());
 		}
 		catch (Exception ex)
@@ -462,6 +456,16 @@ public class GRDNConnectBehaviour : MonoBehaviour
 		string text = ctx.Request.Url.AbsolutePath.ToLower();
 		try
 		{
+			// The prefix accepts any Host so the tunnel can reach us, so this check is
+			// what keeps the listener local. It runs before routing, which covers
+			// /ping and the debug routes too.
+			if (!IsLocalRequest(ctx.Request.RemoteEndPoint))
+			{
+				LogRefusedRemoteRequest();
+				SendJson(ctx.Response, 403, "");
+				return;
+			}
+
 			// Reject all other requests if this player is not the host/singleplayer.
 			// Checked per-request so the state is current (not locked in at startup).
 			if (!IsHostOrSingleplayer())
@@ -1007,6 +1011,38 @@ public class GRDNConnectBehaviour : MonoBehaviour
 		Main.ModEntry.Logger.Warning(
 			"[GRDNConnect] Never received session config from the host. " +
 			"Is GRDNConnect installed and an ops session started there?");
+	}
+
+	// IPAddress.IsLoopback returns false for an IPv4-mapped IPv6 address such as
+	// ::ffff:127.0.0.1, which is how an IPv4 connection is reported on a dual
+	// stack socket, so the address is unmapped before the test. IsLoopback then
+	// covers all of 127.0.0.0/8 and ::1.
+	private static bool IsLocalRequest(IPEndPoint remote)
+	{
+		IPAddress addr = remote?.Address;
+		if (addr == null) return false;
+
+		if (addr.IsIPv4MappedToIPv6) addr = addr.MapToIPv4();
+
+		return IPAddress.IsLoopback(addr);
+	}
+
+	// Port 7230 is open on every interface, so a LAN scan could otherwise drive
+	// one log write per request. Throttled on the same quiet period as the
+	// session-config refusals.
+	private static DateTime _lastRemoteRefusalLog = DateTime.MinValue;
+
+	private static void LogRefusedRemoteRequest()
+	{
+		DateTime now = DateTime.UtcNow;
+		if (_lastRemoteRefusalLog != DateTime.MinValue
+			&& (now - _lastRemoteRefusalLog).TotalSeconds < RefusalLogQuietSeconds)
+			return;
+
+		_lastRemoteRefusalLog = now;
+		Main.ModEntry.Logger.Warning(
+			"[GRDNConnect] Refused a request that did not come from this PC. Port "
+			+ _activePort + " answers local callers only.");
 	}
 
 	private void SendJson(HttpListenerResponse res, int code, string json)
