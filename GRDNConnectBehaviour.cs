@@ -43,6 +43,34 @@ public class GRDNConnectBehaviour : MonoBehaviour
 		!string.IsNullOrEmpty(HostConfig.BotSecret)     ? HostConfig.BotSecret     :
 		"";
 
+	/// <summary>
+	/// The one bot address this host will accept a session-config push from:
+	/// connect.cfg's bot_url when the host set one, otherwise the compiled default.
+	/// </summary>
+	private static string PinnedBotUrl =>
+		!string.IsNullOrEmpty(HostConfig.BotUrl) ? HostConfig.BotUrl : GRDNDefaults.BotUrl;
+
+	/// <summary>
+	/// True when a pushed botUrl is the pinned bot: same scheme, host and port.
+	/// Path and query are not compared, since those stay on the bot's own side.
+	/// </summary>
+	private static bool IsPinnedBotAddress(string pushedUrl)
+	{
+		if (!Uri.TryCreate(pushedUrl, UriKind.Absolute, out Uri pushed))
+			return false;
+
+		// A malformed bot_url in connect.cfg pins nothing, so fall back to the
+		// compiled default rather than accepting whatever arrives.
+		Uri pinned;
+		if (!Uri.TryCreate(PinnedBotUrl, UriKind.Absolute, out pinned)
+			&& !Uri.TryCreate(GRDNDefaults.BotUrl, UriKind.Absolute, out pinned))
+			return false;
+
+		return string.Equals(pushed.Scheme, pinned.Scheme, StringComparison.OrdinalIgnoreCase)
+			&& string.Equals(pushed.Host, pinned.Host, StringComparison.OrdinalIgnoreCase)
+			&& pushed.Port == pinned.Port;
+	}
+
 	private void Awake()
 	{
 		_instance = this;
@@ -684,6 +712,19 @@ public class GRDNConnectBehaviour : MonoBehaviour
 
 		string botUrl = ExtractJsonString(json, "botUrl");
 		string secret = ExtractJsonString(json, "secret");
+
+		// The pushed address is where this host sends its own token, so it has to be
+		// the bot this host already knows. A body that fails the check is dropped
+		// whole: its secret and channel list are worth no more than its address.
+		if (!string.IsNullOrEmpty(botUrl) && !IsPinnedBotAddress(botUrl))
+		{
+			Main.ModEntry.Logger.Warning(
+				"[GRDNConnect] Dropped a /session-config push: its botUrl is not " +
+				$"{PinnedBotUrl}. The bot address and token are unchanged. If the bot " +
+				"moved, set bot_url in connect.cfg to its new address.");
+			SendJson(res, 403, "{\"error\":\"botUrl is not the configured bot\"}");
+			return;
+		}
 
 		// The bot also sends "clientSecret", the weaker token it used to hand to
 		// clients. Nothing reads it here: clients no longer call the bot, they ask
