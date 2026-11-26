@@ -21,8 +21,9 @@ given no token and no bot URL: when a client needs the bot, it asks the host ove
 the multiplayer packet channel and the host makes the call. The host only accepts
 a short list of routes for that, in `BotCall.cs`.
 
-The bot also sends a weaker `clientSecret`, which current builds ignore. It
-exists for any client that still calls the bot directly.
+The bot also sends a weaker `clientSecret`. Nothing receives it: the mod
+discards it on arrival, and no client is handed it by any path. It is left over
+from the model where clients called the bot themselves.
 
 ## Clients
 
@@ -36,6 +37,15 @@ Both sides exchange a protocol version with that config. dv-mp checks mod Ids at
 login but not versions, so a client on a different GRDNConnect build joins
 looking fine. On a protocol mismatch the host refuses the config and both logs
 say which versions are involved.
+
+That version byte is the second check, not the first. dv-mp registers packets
+through LiteNetLib, which identifies each one by a hash of its class name, so
+the class name is the real wire identity and the byte can only be read once the
+bytes have been matched to a type. Builds that share a class name but not its
+fields mis-read each other before the byte is ever compared. That is why the
+protocol-3 packets carry a V3 suffix, and why the 0.93.0 beta class names are
+kept as tombstones: a beta client lands on a handler that knows what it is and
+answers with an empty config, instead of being mis-read or ignored.
 
 This used to be an HTTP fetch from the client to the host's port 7230. That's
 gone. It needed the client to work out the host's address and reach that port,

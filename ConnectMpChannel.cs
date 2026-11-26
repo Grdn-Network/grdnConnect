@@ -31,7 +31,7 @@ using System.Runtime.CompilerServices;
 internal static class ConnectMpChannel
 {
 	/// <summary>
-	/// Wire format version for the two packets below. Bump it whenever a field is
+	/// Wire format version for the packets below. Bump it whenever a field is
 	/// added, removed or changes meaning, because dv-mp auto-serializes these and
 	/// a mismatched shape does not deserialize.
 	///
@@ -40,10 +40,23 @@ internal static class ConnectMpChannel
 	/// nothing useful to salvage. A difference in mod version alone, on the same
 	/// protocol, is only a warning.
 	///
+	/// This byte is a second line of defence, not the first. LiteNetLib keys each
+	/// subscription by a hash of the packet CLASS NAME, so the name is the real wire
+	/// identity and the byte is only readable once a packet has already been matched
+	/// to a type. Two builds that share a class name but not its fields will
+	/// mis-deserialize before anything gets as far as comparing this. That is what
+	/// happened between the betas and protocol 3, and why the protocol-3 packets
+	/// carry a V3 suffix.
+	///
+	/// So: a new protocol version that changes any field MUST also rename its
+	/// packet classes. Bumping the byte alone is not enough.
+	///
 	/// 3: config reply drops BotUrl and Secret, since clients no longer call the
-	///    bot. Adds the bot request relay packets.
+	///    bot. Adds the bot request relay packets. Classes renamed to ...V3Packet,
+	///    and the beta class names kept as tombstones at the bottom of this file.
 	/// 2: added Protocol/ModVersion to both packets and ChannelsJson to the reply.
-	/// 1: 0.93.0-beta.1 to beta.4. BotUrl + Secret only.
+	/// 1: 0.93.0-beta.1 to beta.4. BotUrl + Secret only. Shared the unsuffixed class
+	///    names, which is the bug the V3 suffix fixes.
 	/// </summary>
 	internal const byte ProtocolVersion = 3;
 
@@ -316,7 +329,7 @@ internal static class ConnectMpTransport
 		_server = server;
 		_connectClients.Clear();
 
-		server.RegisterPacket<ConnectConfigRequestPacket>((packet, sender) =>
+		server.RegisterPacket<ConnectConfigRequestV3Packet>((packet, sender) =>
 		{
 			string clientVersion = string.IsNullOrEmpty(packet.ModVersion)
 				? "unknown" : packet.ModVersion;
@@ -360,10 +373,37 @@ internal static class ConnectMpTransport
 				(active ? "(session open)." : "(no session started yet)."));
 		});
 
+		// Tombstone handler for the 0.93.0 beta wire format.
+		//
+		// LiteNetLib keys a subscription by a hash of the packet class name, so the
+		// name is the wire identity. betas 1 to 4 send a class of this name holding a
+		// single byte, and protocol 3 renamed its own packets precisely so those bytes
+		// can never be read as a protocol-3 packet. Registering the old name with the
+		// old shape gives a beta client's packet somewhere to land, instead of an
+		// unregistered hash.
+		//
+		// The reply carries empty strings and nothing else. A beta client reads that as
+		// "no session started yet" and keeps asking on its own retry, which is the only
+		// honest answer available: its half of the protocol cannot be served. A real URL
+		// or token here would hand a credential back to exactly the clients this release
+		// stopped giving one to.
+		server.RegisterPacket<ConnectConfigRequestPacket>((packet, sender) =>
+		{
+			Main.ModEntry.Logger.Warning(
+				$"[GRDNConnect] {sender.Username} runs a 0.93.0 beta build (config protocol " +
+				$"{packet.Version}); this host runs {Main.ModVersion} (config protocol " +
+				$"{ConnectMpChannel.ProtocolVersion}). Their radio and voice switching will not " +
+				"work until they update. Sent an empty config.");
+
+			if (_server == null) return;
+			((MPAPI.Interfaces.IServer)_server).SendPacketToPlayer(
+				new ConnectConfigPacket { BotUrl = "", Secret = "" }, sender);
+		});
+
 		// A client asking the host to spend its token on a bot call. The route
 		// allowlist is the whole protection here, so it is checked before anything
 		// else happens and a refusal is logged with the player who asked.
-		server.RegisterPacket<ConnectBotRequestPacket>((packet, sender) =>
+		server.RegisterPacket<ConnectBotRequestV3Packet>((packet, sender) =>
 		{
 			if (packet.Protocol != ConnectMpChannel.ProtocolVersion)
 			{
@@ -391,7 +431,7 @@ internal static class ConnectMpTransport
 		_client = client;
 		ConnectMpChannel.ResetClientState();
 
-		client.RegisterPacket<ConnectConfigPacket>(packet =>
+		client.RegisterPacket<ConnectConfigV3Packet>(packet =>
 		{
 			string hostVersion = string.IsNullOrEmpty(packet.ModVersion)
 				? "unknown" : packet.ModVersion;
@@ -416,7 +456,7 @@ internal static class ConnectMpTransport
 				packet.SessionActive, packet.ChannelsJson);
 		});
 
-		client.RegisterPacket<ConnectBotResultPacket>(packet =>
+		client.RegisterPacket<ConnectBotResultV3Packet>(packet =>
 		{
 			ConnectMpChannel.CompleteRelay(
 				packet.RequestId, packet.Ok, packet.ResponseJson, packet.Error);
@@ -431,7 +471,7 @@ internal static class ConnectMpTransport
 	internal static void SendConfigRequest()
 	{
 		if (_client == null) return;
-		((MPAPI.Interfaces.IClient)_client).SendPacketToServer(new ConnectConfigRequestPacket
+		((MPAPI.Interfaces.IClient)_client).SendPacketToServer(new ConnectConfigRequestV3Packet
 		{
 			Protocol   = ConnectMpChannel.ProtocolVersion,
 			ModVersion = Main.ModVersion,
@@ -447,7 +487,7 @@ internal static class ConnectMpTransport
 	private static void SendConfigTo(
 		MPAPI.Interfaces.IPlayer player, bool sessionActive, string channelsJson)
 	{
-		((MPAPI.Interfaces.IServer)_server).SendPacketToPlayer(new ConnectConfigPacket
+		((MPAPI.Interfaces.IServer)_server).SendPacketToPlayer(new ConnectConfigV3Packet
 		{
 			Protocol      = ConnectMpChannel.ProtocolVersion,
 			ModVersion    = Main.ModVersion,
@@ -462,7 +502,7 @@ internal static class ConnectMpTransport
 		object player, byte requestId, bool ok, string responseJson, string error)
 	{
 		if (_server == null || !(player is MPAPI.Interfaces.IPlayer target)) return;
-		((MPAPI.Interfaces.IServer)_server).SendPacketToPlayer(new ConnectBotResultPacket
+		((MPAPI.Interfaces.IServer)_server).SendPacketToPlayer(new ConnectBotResultV3Packet
 		{
 			Protocol     = ConnectMpChannel.ProtocolVersion,
 			RequestId    = requestId,
@@ -477,7 +517,7 @@ internal static class ConnectMpTransport
 	internal static void SendBotRequest(byte requestId, string route, string bodyJson)
 	{
 		if (_client == null) return;
-		((MPAPI.Interfaces.IClient)_client).SendPacketToServer(new ConnectBotRequestPacket
+		((MPAPI.Interfaces.IClient)_client).SendPacketToServer(new ConnectBotRequestV3Packet
 		{
 			Protocol  = ConnectMpChannel.ProtocolVersion,
 			RequestId = requestId,
@@ -503,7 +543,7 @@ internal static class ConnectMpTransport
 /// versions so the host can refuse an incompatible protocol and name the build in
 /// its log. Auto-serialized.
 /// </summary>
-public class ConnectConfigRequestPacket : MPAPI.Interfaces.Packets.IPacket
+public class ConnectConfigRequestV3Packet : MPAPI.Interfaces.Packets.IPacket
 {
 	public byte   Protocol   { get; set; }
 	public string ModVersion { get; set; }
@@ -515,7 +555,7 @@ public class ConnectConfigRequestPacket : MPAPI.Interfaces.Packets.IPacket
 /// URL and no token are sent. A Protocol that does not match the client's is a
 /// refusal, whatever else the packet holds. Auto-serialized.
 /// </summary>
-public class ConnectConfigPacket : MPAPI.Interfaces.Packets.IPacket
+public class ConnectConfigV3Packet : MPAPI.Interfaces.Packets.IPacket
 {
 	public byte   Protocol   { get; set; }
 	public string ModVersion { get; set; }
@@ -537,7 +577,7 @@ public class ConnectConfigPacket : MPAPI.Interfaces.Packets.IPacket
 /// Client to server: "make this bot call for me." The host checks the route against
 /// its own allowlist before spending its token on it. Auto-serialized.
 /// </summary>
-public class ConnectBotRequestPacket : MPAPI.Interfaces.Packets.IPacket
+public class ConnectBotRequestV3Packet : MPAPI.Interfaces.Packets.IPacket
 {
 	public byte   Protocol  { get; set; }
 
@@ -551,13 +591,44 @@ public class ConnectBotRequestPacket : MPAPI.Interfaces.Packets.IPacket
 }
 
 /// <summary>Server to client: what the bot said, or why it did not get asked. Auto-serialized.</summary>
-public class ConnectBotResultPacket : MPAPI.Interfaces.Packets.IPacket
+public class ConnectBotResultV3Packet : MPAPI.Interfaces.Packets.IPacket
 {
 	public byte   Protocol     { get; set; }
 	public byte   RequestId    { get; set; }
 	public bool   Ok           { get; set; }
 	public string ResponseJson { get; set; }
 	public string Error        { get; set; }
+}
+
+/// <summary>
+/// Tombstone: the config request exactly as 0.93.0-beta.1 to beta.4 send it.
+///
+/// This build never sends it. It exists so a beta client's packet lands on a
+/// registered handler rather than an unknown type name. Those builds set Version
+/// and nothing ever read it, so that line had no version gate at all; the field is
+/// here only to match what goes on the wire.
+///
+/// Do not change these fields. They record what shipped, not a design.
+/// </summary>
+public class ConnectConfigRequestPacket : MPAPI.Interfaces.Packets.IPacket
+{
+	public byte Version { get; set; }
+}
+
+/// <summary>
+/// Tombstone: the config reply exactly as 0.93.0-beta.1 to beta.4 read it.
+///
+/// Only ever sent with both fields empty. A beta client reads empty strings as "the
+/// host has not started a session yet" and keeps asking.
+///
+/// Never put a real URL or token in here. These are the clients that hold no
+/// credential of their own by design, and filling this in would hand one back to
+/// every one of them.
+/// </summary>
+public class ConnectConfigPacket : MPAPI.Interfaces.Packets.IPacket
+{
+	public string BotUrl { get; set; }
+	public string Secret { get; set; }
 }
 
 #endif
