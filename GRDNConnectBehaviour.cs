@@ -43,6 +43,90 @@ public class GRDNConnectBehaviour : MonoBehaviour
 		!string.IsNullOrEmpty(HostConfig.BotSecret)     ? HostConfig.BotSecret     :
 		"";
 
+	// Refused session-config pushes are logged once and then throttled. The
+	// -connect hostname is public, so without this anyone who knows it could
+	// drive one log write per request.
+	private static DateTime _lastRefusalLog = DateTime.MinValue;
+	private const int RefusalLogQuietSeconds = 60;
+
+	/// <summary>
+	/// A host accepts a session-config push from its configured bot or from the
+	/// official one: connect.cfg's bot_url when the host set a usable one, and
+	/// GRDNDefaults.BotUrl. Both, because a stale bot_url would otherwise refuse
+	/// the official bot, and the official address alone would refuse a
+	/// self-hosted one. Neither is set by whoever sent the push.
+	/// <para>
+	/// A cfg address counts only when it is https or loopback, so the host token
+	/// never travels in cleartext off the machine.
+	/// </para>
+	/// </summary>
+	private static List<Uri> PinnedBots()
+	{
+		var bots = new List<Uri>(2);
+		Uri parsed;
+
+		if (!string.IsNullOrEmpty(HostConfig.BotUrl)
+			&& Uri.TryCreate(HostConfig.BotUrl, UriKind.Absolute, out parsed)
+			&& (parsed.IsLoopback
+				|| string.Equals(parsed.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)))
+			bots.Add(parsed);
+
+		if (Uri.TryCreate(GRDNDefaults.BotUrl, UriKind.Absolute, out parsed)
+			&& !bots.Any(b => SamePlace(b, parsed)))
+			bots.Add(parsed);
+
+		return bots;
+	}
+
+	/// <summary>Same scheme, host and port. Path and query are not compared,
+	/// since those stay on the bot's own side.</summary>
+	private static bool SamePlace(Uri a, Uri b) =>
+		string.Equals(a.Scheme, b.Scheme, StringComparison.OrdinalIgnoreCase)
+		&& string.Equals(a.Host, b.Host, StringComparison.OrdinalIgnoreCase)
+		&& a.Port == b.Port;
+
+	/// <summary>
+	/// Scheme, host, port and path rebuilt from the parsed form, so the result
+	/// parses the same way wherever it is read again. Authority carries host and
+	/// port and never userinfo, which the rebuild therefore drops along with any
+	/// query and fragment.
+	/// </summary>
+	private static string Rebuild(Uri u) =>
+		(u.Scheme + "://" + u.Authority + u.AbsolutePath).TrimEnd('/');
+
+	/// <summary>
+	/// A pushed botUrl, rebuilt, when it is one of the pinned bots. Null when it
+	/// is anything else.
+	/// </summary>
+	private static string AcceptedBotUrl(string pushedUrl)
+	{
+		if (!Uri.TryCreate(pushedUrl, UriKind.Absolute, out Uri pushed)) return null;
+
+		foreach (Uri bot in PinnedBots())
+			if (SamePlace(pushed, bot)) return Rebuild(pushed);
+
+		return null;
+	}
+
+	private static void LogRefusedPush()
+	{
+		DateTime now = DateTime.UtcNow;
+		if (_lastRefusalLog != DateTime.MinValue
+			&& (now - _lastRefusalLog).TotalSeconds < RefusalLogQuietSeconds)
+			return;
+
+		_lastRefusalLog = now;
+		List<Uri> bots = PinnedBots();
+		string addresses = bots.Count == 0
+			? "(no usable bot address)"
+			: string.Join(" or ", bots.Select(Rebuild));
+
+		Main.ModEntry.Logger.Warning(
+			"[GRDNConnect] Dropped a /session-config push: its botUrl is not " +
+			$"{addresses}. The bot address and token are unchanged. If the bot moved, " +
+			"set bot_url in connect.cfg to its new address.");
+	}
+
 	private void Awake()
 	{
 		_instance = this;
@@ -685,12 +769,29 @@ public class GRDNConnectBehaviour : MonoBehaviour
 		string botUrl = ExtractJsonString(json, "botUrl");
 		string secret = ExtractJsonString(json, "secret");
 
+		// The pushed address is where this host sends its own token, so it has to be
+		// the bot this host already knows. A body that fails the check is dropped
+		// whole: its secret and channel list are worth no more than its address.
+		// What gets stored is rebuilt from the parsed form, so the address checked
+		// here and the address later connected to cannot be read differently.
+		string accepted = null;
+		if (!string.IsNullOrEmpty(botUrl))
+		{
+			accepted = AcceptedBotUrl(botUrl);
+			if (accepted == null)
+			{
+				LogRefusedPush();
+				SendJson(res, 403, "{\"error\":\"botUrl is not the configured bot\"}");
+				return;
+			}
+		}
+
 		// The bot also sends "clientSecret", the weaker token it used to hand to
 		// clients. Nothing reads it here: clients no longer call the bot, they ask
 		// the host to (see BotCall), so the only token in play is this host's.
 
-		if (!string.IsNullOrEmpty(botUrl))
-			_sessionBotUrl = botUrl.TrimEnd('/');
+		if (accepted != null)
+			_sessionBotUrl = accepted;
 		// Allow secret to be set to empty string to clear it
 		if (secret != null)
 			_sessionBotSecret = secret;
@@ -835,8 +936,7 @@ public class GRDNConnectBehaviour : MonoBehaviour
 
 		Main.ModEntry.Logger.Warning(
 			"[GRDNConnect] Never received session config from the host. " +
-			"Is GRDNConnect installed and an ops session started there? " +
-			"Set bot_url and bot_secret in connect.cfg as a manual fallback.");
+			"Is GRDNConnect installed and an ops session started there?");
 	}
 
 	private void SendJson(HttpListenerResponse res, int code, string json)
