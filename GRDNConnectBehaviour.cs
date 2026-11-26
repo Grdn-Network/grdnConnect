@@ -814,32 +814,37 @@ public class GRDNConnectBehaviour : MonoBehaviour
 		string botUrl = ExtractJsonString(json, "botUrl");
 		string secret = ExtractJsonString(json, "secret");
 
+		// A session config is an address together with the token to use on it. Half
+		// a body would pair one of them with whatever the host already held, so both
+		// have to be present. An empty secret still counts as present, since that is
+		// how a session is cleared.
+		if (string.IsNullOrEmpty(botUrl) || secret == null)
+		{
+			LogRefusedPush();
+			SendJson(res, 400, "{\"error\":\"session config needs both botUrl and secret\"}");
+			return;
+		}
+
 		// The pushed address is where this host sends its own token, so it has to be
 		// the bot this host already knows. A body that fails the check is dropped
 		// whole: its secret and channel list are worth no more than its address.
 		// What gets stored is rebuilt from the parsed form, so the address checked
 		// here and the address later connected to cannot be read differently.
-		string accepted = null;
-		if (!string.IsNullOrEmpty(botUrl))
+		string accepted = AcceptedBotUrl(botUrl);
+		if (accepted == null)
 		{
-			accepted = AcceptedBotUrl(botUrl);
-			if (accepted == null)
-			{
-				LogRefusedPush();
-				SendJson(res, 403, "{\"error\":\"botUrl is not the configured bot\"}");
-				return;
-			}
+			LogRefusedPush();
+			SendJson(res, 403, "{\"error\":\"botUrl is not the configured bot\"}");
+			return;
 		}
 
 		// The bot also sends "clientSecret", the weaker token it used to hand to
 		// clients. Nothing reads it here: clients no longer call the bot, they ask
 		// the host to (see BotCall), so the only token in play is this host's.
 
-		if (accepted != null)
-			_sessionBotUrl = accepted;
-		// Allow secret to be set to empty string to clear it
-		if (secret != null)
-			_sessionBotSecret = secret;
+		_sessionBotUrl = accepted;
+		// An empty secret clears it, which is how a session ends.
+		_sessionBotSecret = secret;
 
 		// Update live radio channel list (always safe to call — no-ops if no channels key)
 		RadioIntegration.UpdateChannelsFromJson(json);
