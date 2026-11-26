@@ -4,10 +4,11 @@ The mod's HTTP listener only accepts local connections now. The one way in from
 outside is the Cloudflare tunnel at `<host>-connect.<domain>`. Those hostnames
 are public and easy to guess, so the tunnel needs a lock on it.
 
-Without one, anyone who guesses a hostname can POST `/session-config` and
-overwrite the host's bot URL and token, which points that host's traffic at a
-server of their choosing. The routes carry no auth of their own, by design: the
-lock belongs in front of the tunnel, where Cloudflare already knows both ends.
+The routes behind it carry no auth of their own, by design. The bot and the mod
+have no shared secret to check at that layer that would not also have to ship
+inside the mod, which is issue #8. So the lock belongs in front of the tunnel,
+where Cloudflare already knows both ends, and until it is on, an unguarded
+tunnel is reachable by anyone who finds the hostname.
 
 This gives the bot a service token and shuts the door on everyone else. It works
 on the free Zero Trust plan and doesn't change the tunnels themselves.
@@ -147,12 +148,13 @@ accepts, every bot-to-host call starts coming back 401, and Start Session stops
 reaching hosts. It looks exactly like the lockout below, a year after you last
 thought about this file.
 
-Write the expiry date somewhere you will actually see it, with a reminder a
-couple of weeks ahead. Renewing is the same as step 1: make a new token, put it
-in `.env`, restart the bot, then delete the old one. The Access application and
-policy stay as they are, because the policy matches the token by name.
+Check the expiry on the token when you create it and put that date in a
+calendar, with a reminder a couple of weeks ahead. Don't record it here: this
+repo is public, and the date tells anyone reading when the lock lapses.
 
-Current token: `grdn-bot`, expires **2027-11-25**.
+Renewing is the same as step 1: make a new token, put it in `.env`, restart the
+bot, then delete the old one. The Access application and policy stay as they
+are, because the policy matches the token by name.
 
 ## If you lock yourself out
 
