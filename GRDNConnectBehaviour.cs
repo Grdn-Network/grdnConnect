@@ -870,7 +870,7 @@ public class GRDNConnectBehaviour : MonoBehaviour
 		RadioIntegration.UpdateChannelsFromJson(json);
 
 		Main.ModEntry.Logger.Log(
-			$"[GRDNConnect] Session config received — url={_sessionBotUrl}");
+			$"[GRDNConnect] Session config received: url={_sessionBotUrl}");
 
 		// Push it straight out to any client already connected. Without this a client
 		// who joined before /session start would hold nothing until their next retry.
