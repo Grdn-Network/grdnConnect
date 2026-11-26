@@ -148,14 +148,34 @@ public class GRDNConnectBehaviour : MonoBehaviour
 			$"{GRDNDefaults.BotUrl} instead. Change the line or remove it.");
 	}
 
-	private static void LogRefusedPush()
+	/// <summary>
+	/// True when the throttle allows another refusal line. Every refusal shares it,
+	/// so the rate holds however many reasons there are to refuse.
+	/// </summary>
+	private static bool MayLogRefusal()
 	{
 		DateTime now = DateTime.UtcNow;
 		if (_lastRefusalLog != DateTime.MinValue
 			&& (now - _lastRefusalLog).TotalSeconds < RefusalLogQuietSeconds)
-			return;
+			return false;
 
 		_lastRefusalLog = now;
+		return true;
+	}
+
+	private static void LogIncompletePush()
+	{
+		if (!MayLogRefusal()) return;
+
+		Main.ModEntry.Logger.Warning(
+			"[GRDNConnect] Dropped a /session-config push: it carried only one of the " +
+			"bot address and the token. The bot address and token are unchanged.");
+	}
+
+	private static void LogRefusedPush()
+	{
+		if (!MayLogRefusal()) return;
+
 		List<Uri> bots = PinnedBots();
 		string addresses = bots.Count == 0
 			? "(no usable bot address)"
@@ -816,11 +836,11 @@ public class GRDNConnectBehaviour : MonoBehaviour
 
 		// A session config is an address together with the token to use on it. Half
 		// a body would pair one of them with whatever the host already held, so both
-		// have to be present. An empty secret still counts as present, since that is
-		// how a session is cleared.
+		// have to be present. An empty secret counts as present and clears the
+		// stored token.
 		if (string.IsNullOrEmpty(botUrl) || secret == null)
 		{
-			LogRefusedPush();
+			LogIncompletePush();
 			SendJson(res, 400, "{\"error\":\"session config needs both botUrl and secret\"}");
 			return;
 		}
@@ -843,14 +863,14 @@ public class GRDNConnectBehaviour : MonoBehaviour
 		// the host to (see BotCall), so the only token in play is this host's.
 
 		_sessionBotUrl = accepted;
-		// An empty secret clears it, which is how a session ends.
+		// An empty secret clears the stored token.
 		_sessionBotSecret = secret;
 
 		// Update live radio channel list (always safe to call — no-ops if no channels key)
 		RadioIntegration.UpdateChannelsFromJson(json);
 
 		Main.ModEntry.Logger.Log(
-			$"[GRDNConnect] Session config received — url={_sessionBotUrl ?? "(unchanged)"}");
+			$"[GRDNConnect] Session config received — url={_sessionBotUrl}");
 
 		// Push it straight out to any client already connected. Without this a client
 		// who joined before /session start would hold nothing until their next retry.
