@@ -55,6 +55,12 @@ public class GRDNConnectBehaviour : MonoBehaviour
 	/// GRDNDefaults.BotUrl. Both, because a stale bot_url would otherwise refuse
 	/// the official bot, and the official address alone would refuse a
 	/// self-hosted one. Neither is set by whoever sent the push.
+	/// <para>
+	/// A cfg address counts only when it is https or loopback. A plain http
+	/// address off the machine would carry the host token in cleartext, and the
+	/// config migration seeded bot_url from the old UMM settings, so a host can
+	/// hold an http address it never chose.
+	/// </para>
 	/// </summary>
 	private static List<Uri> PinnedBots()
 	{
@@ -62,7 +68,9 @@ public class GRDNConnectBehaviour : MonoBehaviour
 		Uri parsed;
 
 		if (!string.IsNullOrEmpty(HostConfig.BotUrl)
-			&& Uri.TryCreate(HostConfig.BotUrl, UriKind.Absolute, out parsed))
+			&& Uri.TryCreate(HostConfig.BotUrl, UriKind.Absolute, out parsed)
+			&& (parsed.IsLoopback
+				|| string.Equals(parsed.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)))
 			bots.Add(parsed);
 
 		if (Uri.TryCreate(GRDNDefaults.BotUrl, UriKind.Absolute, out parsed)
