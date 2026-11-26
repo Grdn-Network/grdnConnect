@@ -930,8 +930,7 @@ public class GRDNConnectBehaviour : MonoBehaviour
 
 		Main.ModEntry.Logger.Warning(
 			"[GRDNConnect] Never received session config from the host. " +
-			"Is GRDNConnect installed and an ops session started there? " +
-			"Set bot_url and bot_secret in connect.cfg as a manual fallback.");
+			"Is GRDNConnect installed and an ops session started there?");
 	}
 
 	private void SendJson(HttpListenerResponse res, int code, string json)
