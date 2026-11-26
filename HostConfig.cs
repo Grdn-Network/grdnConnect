@@ -180,8 +180,10 @@ internal static class HostConfig
 		sb.AppendLine("#");
 		sb.AppendLine("# Reload after editing with 'connect.reload' in the in-game console.");
 		sb.AppendLine();
-		sb.AppendLine("# Base URL of the bot. Leave empty to use the public default,");
+		sb.AppendLine("# Base URL of the bot. Leave empty to use the GRDN bot at");
 		sb.AppendLine($"# {GRDNDefaults.BotUrl}");
+		sb.AppendLine("# Must be an https address, or a loopback address on this machine.");
+		sb.AppendLine("# Any other address is ignored and the GRDN bot is used instead.");
 		sb.AppendLine("bot_url = " + oldUrl);
 		sb.AppendLine();
 		sb.AppendLine("# Shared secret. Normally left empty: the bot mints a fresh per-session");
