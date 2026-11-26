@@ -56,10 +56,8 @@ public class GRDNConnectBehaviour : MonoBehaviour
 	/// the official bot, and the official address alone would refuse a
 	/// self-hosted one. Neither is set by whoever sent the push.
 	/// <para>
-	/// A cfg address counts only when it is https or loopback. A plain http
-	/// address off the machine would carry the host token in cleartext, and the
-	/// config migration seeded bot_url from the old UMM settings, so a host can
-	/// hold an http address it never chose.
+	/// A cfg address counts only when it is https or loopback, so the host token
+	/// never travels in cleartext off the machine.
 	/// </para>
 	/// </summary>
 	private static List<Uri> PinnedBots()
